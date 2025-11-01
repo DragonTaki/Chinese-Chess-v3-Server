@@ -14,16 +14,20 @@ import (
 	"sync"
 	"time"
 
-	"Chinese-Chess-v3-Sever/logger"
+	"Chinese-Chess-v3-Server/logger"
+
+	"gorm.io/gorm"
 )
 
 type Server struct {
+	dbConn  *gorm.DB
 	clients map[*Client]bool
 	mu      sync.Mutex
 }
 
-func NewServer() *Server {
+func NewServer(dbConn *gorm.DB) *Server {
 	return &Server{
+		dbConn:  dbConn,
 		clients: make(map[*Client]bool),
 	}
 }

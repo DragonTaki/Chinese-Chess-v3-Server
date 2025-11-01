@@ -12,7 +12,7 @@ package server
 import (
 	"time"
 
-	"Chinese-Chess-v3-Sever/logger"
+	"Chinese-Chess-v3-Server/logger"
 )
 
 func (s *Server) StartHeartbeatSystem() {

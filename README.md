@@ -11,6 +11,43 @@ Features:
 
 ---
 
+## ⚙️ Project Features 專案特點
+
+本專案以 Golang 編寫，作為 Chinese-Chess-v3 的中央伺服器系統。  
+本程式具備以下主要特點：
+
+1. 資料庫系統
+
+    - 目前採用 SQLite 做為系統資料庫
+
+2. 安全性
+
+    - 使用 JWT 方式建立連線
+
+    - 由環境變數設定加密金鑰，而非寫死於 Code 中
+
+    - 密碼以 Hash 過的數值儲存
+
+3. 伺服器功能
+
+    - TCP 連線
+
+    - 雙重階段驗證：版本驗證 -> 身分驗證
+
+    - 非對稱心跳探測
+
+        - 伺服端採用廣播方式發布心跳封包
+
+        - 每隔固定時間檢查是否收到用戶端心跳
+
+4. 使用者系統
+
+    - 以現今遊戲常用的 9 位數字 UID 作為玩家唯一標示符，不連號
+
+    - Email 與密碼作為登入驗證資訊
+
+---
+
 ## 🛡️ About Chinese Chess
 
 Chinese chess is a strategy board game for two players.  

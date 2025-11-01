@@ -43,7 +43,7 @@ func (c *Client) Listen() {
 	}()
 
 	// Auth session
-	if ok := Authenticate(c, AuthTimeoutLimit); !ok { // If auth fail
+	if ok := c.Server.Authenticate(c, AuthTimeoutLimit); !ok { // If auth fail
 		return
 	}
 

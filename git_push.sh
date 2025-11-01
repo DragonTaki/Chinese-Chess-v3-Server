@@ -11,7 +11,7 @@
 
 # ----- Config -----
 GIT_REMOTE_NAME="origin"
-GIT_REMOTE_URL="https://github.com/DragonTaki/Chinese-Chess-v3-Sever.git"
+GIT_REMOTE_URL="https://github.com/DragonTaki/Chinese-Chess-v3-Server.git"
 MAIN_BRANCH="main"
 
 # Exit immediately on error

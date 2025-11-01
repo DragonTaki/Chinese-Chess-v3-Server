@@ -11,9 +11,11 @@ package server
 
 import (
 	"bufio"
+	"fmt"
 	"time"
 
-	"Chinese-Chess-v3-Sever/logger"
+	"Chinese-Chess-v3-Server/logger"
+	"Chinese-Chess-v3-Server/server/db"
 )
 
 type AuthMessage struct {
@@ -22,60 +24,76 @@ type AuthMessage struct {
 	Version  string `json:"version"`
 }
 
-// Authenticate 監控 client 在 timeout 內是否傳送驗證訊息 (HELLO)
-// 成功驗證回傳 true，失敗或超時回傳 false
-func Authenticate(c *Client, timeout time.Duration) bool {
+// Return true if success; return false if fail or overtime
+func (s *Server) Authenticate(c *Client, timeout time.Duration) bool {
+	dbConn := s.dbConn
 	authCh := make(chan bool, 1)
 
 	go func() {
 		scanner := bufio.NewScanner(c.Connection)
+
+		// Stage 1: Version
+		// Stage 2: Email and password
+		stage := 1
+
 		for scanner.Scan() {
 			line := scanner.Text()
-
-			// Deserialize JSON packet
 			pkt, err := DeserializePacket(line)
 			if err != nil {
 				logger.Warnf("Invalid packet from %s: %v", c.RemoteAddr, err)
 				continue
 			}
 
-			// Check if Auth packet
 			if pkt.Type != PacketTypeAuthRequest {
 				logger.Warnf("Unexpected packet type from %s: %s", c.RemoteAddr, pkt.Type)
 				continue
 			}
 
-			// SenderId cannot be empty
-			if pkt.SenderId == "" {
-				logger.Warnf("Missing senderId from %s", c.RemoteAddr)
-				authCh <- false
-				return
+			ad, err := pkt.ParseAuthData()
+			if err != nil {
+				logger.Warnf("Failed to parse auth data from %s: %v", c.RemoteAddr, err)
+				continue
 			}
 
-			// Check if version match
-			if pkt.Data != ServerVersion {
-				logger.Warnf("Version mismatch from %s: %s != %s",
-					c.RemoteAddr, pkt.Data, ServerVersion)
-				authCh <- false
+			switch stage {
+			case 1:
+				if ad.Version != ServerVersion {
+					logger.Warnf("Version mismatch from %s: %s != %s", c.RemoteAddr, ad.Version, ServerVersion)
+					authCh <- false
+					return
+				}
+
+				// Request email and password for stage 2
+				respPkt := CreatePacket(PacketTypeAuthRequest, "Server", "", "Please provide username/password", "")
+				c.SendPacket(respPkt)
+				stage = 2
+
+			case 2:
+				if ad.Username == "" || ad.Password == "" {
+					logger.Warnf("Missing username/password from %s", c.RemoteAddr)
+					authCh <- false
+					return
+				}
+
+fmt.Println("Input password:", ad.Password)
+				token, ok := db.VerifyUser(dbConn, ad.Username, ad.Password)
+				if !ok {
+					logger.Warnf("Invalid credentials from %s", c.RemoteAddr)
+					authCh <- false
+					return
+				}
+
+				// Auth success
+				c.SenderId = pkt.SenderId
+				c.IsAuthenticated = true
+				c.LastSeenAt = time.Now()
+
+				respPkt := CreatePacket(PacketTypeAuthResponse, "Server", "", AuthSuccessString, token)
+				c.SendPacket(respPkt)
+
+				authCh <- true
 				return
 			}
-
-			// Auth success
-			c.SenderId = pkt.SenderId
-			c.IsAuthenticated = true
-			c.LastSeenAt = time.Now()
-
-			respPkt := CreatePacket(
-				PacketTypeAuthResponse,
-				"Server",
-				"",
-				AuthSuccessString,
-				"",
-			)
-			c.SendPacket(respPkt)
-
-			authCh <- true
-			return
 		}
 	}()
 
@@ -85,7 +103,6 @@ func Authenticate(c *Client, timeout time.Duration) bool {
 			logger.Infof("Client %s authenticated successfully", c.RemoteAddr)
 		}
 		return ok
-
 	case <-time.After(timeout):
 		logger.Warnf("Client %s failed to authenticate in time", c.RemoteAddr)
 		return false
