@@ -2,6 +2,16 @@
 
 依據 `STATUS.md` 目前的缺口排出的優先順序。
 
+## 架構定位
+
+這個 repo 是完全獨立的系統，不是 client 端 `Network` 模組的上層或下層，
+而是協定的另一端——細節見
+[`Chinese-Chess-v3/docs/ARCHITECTURE.md`](https://github.com/DragonTaki/Chinese-Chess-v3/blob/main/docs/ARCHITECTURE.md)。
+client 端目前的整理順序是「先打好 Engine／Game／StarAnimation 的地基，
+連線功能最後才做」——所以第 2 項（房間／對局邏輯）這種**新功能**，要等
+client 端把地基整理完、真的要接連線的時候再一起做。第 1 項（除錯 log
+洩漏）是既有 bug，不算新功能，不受這個順序影響，照樣優先修。
+
 1. **先清掉洩漏的除錯 log。** `auth.go` 每次驗證都會把明文密碼印到
    stdout，`repository.go` 會印出 bcrypt hash。這是正在發生的憑證洩漏，
    優先度最高，先修。
