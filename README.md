@@ -10,9 +10,6 @@ This project is only for private use.
 伺服器系統，以 Go 編寫。負責身分驗證（JWT、bcrypt 密碼雜湊）、SQLite 使用者
 資料庫、伺服端與用戶端之間的非對稱心跳探測，以及 TCP 上的聊天廣播。
 
-目前實際完成度與尚未完成的部分請見 [`docs/STATUS.md`](docs/STATUS.md)；
-後續修改的優先順序規劃請見 [`docs/PLAN.md`](docs/PLAN.md)。
-
 ---
 
 ## 🛡️ About Chinese Chess
