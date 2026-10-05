@@ -3,14 +3,13 @@
 // Do not distribute or modify
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
-// Update Date: 2025/11/01
-// Version: v1.0
+// Update Date: 2026/10/05
+// Version: v1.1
 /* ----- ----- ----- ----- */
 
 package db
 
 import (
-	"fmt"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -50,7 +49,6 @@ func VerifyUser(db *gorm.DB, email string, password string) (string, bool) {
 
 	// Compare password hash
 	err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password))
-	fmt.Println("Stored hash:", user.PasswordHash)
 	if err != nil {
 		return "", false
 	}

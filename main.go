@@ -3,8 +3,8 @@
 // Do not distribute or modify
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
-// Update Date: 2025/11/01
-// Version: v1.0
+// Update Date: 2026/10/05
+// Version: v1.1
 /* ----- ----- ----- ----- */
 
 package main
@@ -12,8 +12,6 @@ package main
 import (
 	"fmt"
 	"net"
-	"os"
-	"strings"
 
 	"Chinese-Chess-v3-Server/logger"
 	"Chinese-Chess-v3-Server/server"
@@ -23,9 +21,6 @@ import (
 func main() {
 	// Init database
 	fmt.Println("== Server Booting ==")
-
-	jwtSecret := strings.Trim(os.Getenv("JWT_SECRET"), `"`)
-	fmt.Println("JWT_SECRET =", jwtSecret)
 
 	dbConn, err := db.InitDB()
 	if err != nil {

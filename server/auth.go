@@ -3,15 +3,14 @@
 // Do not distribute or modify
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
-// Update Date: 2025/11/01
-// Version: v1.0
+// Update Date: 2026/10/05
+// Version: v1.1
 /* ----- ----- ----- ----- */
 
 package server
 
 import (
 	"bufio"
-	"fmt"
 	"time"
 
 	"Chinese-Chess-v3-Server/logger"
@@ -75,7 +74,6 @@ func (s *Server) Authenticate(c *Client, timeout time.Duration) bool {
 					return
 				}
 
-fmt.Println("Input password:", ad.Password)
 				token, ok := db.VerifyUser(dbConn, ad.Username, ad.Password)
 				if !ok {
 					logger.Warnf("Invalid credentials from %s", c.RemoteAddr)
