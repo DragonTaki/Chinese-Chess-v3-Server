@@ -1,114 +1,48 @@
-## Ignore Visual Studio temporary files, build results, and
-## user-specific files
-
-# Build results
+# ----- Build output -----
 [Bb]in/
 [Oo]bj/
 [Ll]og/
 *.log
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
 
-# Uncomment if you have tasks that create the project's static files in wwwroot
-# wwwroot/
+# ----- Go -----
+go.work
+go.work.sum
+coverage.*
 
-# User-specific files
+# ----- Databases (only the tracked test database server/db/chess.db is kept in the repo; author 2026-10-05) -----
+*.db
+*.sqlite
+*.db-journal
+*.db-wal
+*.db-shm
+
+# ----- Editors and IDEs -----
+.vscode/
+.idea/
+.vs/
 .VSCodeCounter
-*.user
-*.suo
-*.userosscache
-*.sln.docstates
 
-# Mono Auto Generated Files
-mono_crash.*
-
-# Windows image file caches
+# ----- Operating systems -----
+.DS_Store
 Thumbs.db
 ehthumbs.db
-
-# Folder config file
 Desktop.ini
 
-# VS Code
-.vscode/
-
-# Rider
-.idea/
-
-# ASP.NET Scaffolding
-ScaffoldingReadMe.txt
-
-# DotCover
-*.dotCover
-
-# JetBrains Rider
-.idea/
-*.sln.iml
-
-# Visual Studio
-.vs/
-
-# NuGet
-*.nupkg
-*.snupkg
-.nuget/
-packages/
-project.lock.json
-project.fragment.lock.json
-artifacts/
-
-# Resharper
-_ReSharper*/
-*.[Rr]e[Ss]harper
-*.DotSettings.user
-
-# File-based project tools
-*.dbmdl
-*.bak
-
-# T4
-*.tt~
-*.tmp
-
-# Publish files
-*.publish.xml
-
-# Runtime
-*.exe
-*.dll
-*.pdb
-
-# Others
-*.cache
-*.config
-*.vspscc
-*.vssscc
-*.ncb
-*.sbr
-*.scc
-*.class
-*.DS_Store
-*.orig
-*.bak
-
-# Test results
-TestResults/
-*.trx
-*.coverage
-*.coveragexml
-*.testsettings
-*.vsmdi
-*.vsp
-*.vspx
-*.sarif
-
-# Temporary files
+# ----- Temporary, backup and merge files -----
 ~$*
 *.tmp
 *.temp
 *.swp
 *.swo
-
-# Git directory metadata
+*.bak
 *.orig
 
-# Others
-*.sqlite
+# ----- Others -----
+*.config
