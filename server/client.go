@@ -42,8 +42,12 @@ func (c *Client) Listen() {
 		c.Server.RemoveClient(c)
 	}()
 
+	// One reader for the whole connection: the auth stage and the chat loop below share it, so
+	// nothing the client sends right after authenticating is lost in a second reader's buffer.
+	scanner := bufio.NewScanner(c.Connection)
+
 	// Auth session
-	if ok := c.Server.Authenticate(c, AuthTimeoutLimit); !ok { // If auth fail
+	if ok := c.Server.Authenticate(c, scanner, AuthTimeoutLimit); !ok { // If auth fail
 		return
 	}
 
@@ -51,7 +55,6 @@ func (c *Client) Listen() {
 	welcomePkt := CreatePacket(PacketTypeServer, "Server", "", "Welcome to Go-Chess-Server! Type message to chat.", "")
 	c.SendPacket(welcomePkt)
 
-	scanner := bufio.NewScanner(c.Connection)
 	for scanner.Scan() {
 		line := scanner.Text()
 		c.LastSeenAt = time.Now()

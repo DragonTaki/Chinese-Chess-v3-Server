@@ -23,14 +23,14 @@ type AuthMessage struct {
 	Version  string `json:"version"`
 }
 
-// Return true if success; return false if fail or overtime
-func (s *Server) Authenticate(c *Client, timeout time.Duration) bool {
+// Authenticate runs the two-stage handshake (version, then username / password) on c, reading
+// with scanner (the connection's only reader, shared with Client.Listen). Returns true on
+// success; false on failure or when it does not finish within timeout.
+func (s *Server) Authenticate(c *Client, scanner *bufio.Scanner, timeout time.Duration) bool {
 	dbConn := s.dbConn
 	authCh := make(chan bool, 1)
 
 	go func() {
-		scanner := bufio.NewScanner(c.Connection)
-
 		// Stage 1: Version
 		// Stage 2: Email and password
 		stage := 1
