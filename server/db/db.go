@@ -14,6 +14,8 @@ import (
 	"gorm.io/gorm"
 )
 
+// InitDB opens the SQLite database server/db/chess.db (relative to the working directory: run the
+// server from the repo root) and migrates the tables.
 func InitDB() (*gorm.DB, error) {
 	db, err := gorm.Open(sqlite.Open("server/db/chess.db"), &gorm.Config{})
 	if err != nil {

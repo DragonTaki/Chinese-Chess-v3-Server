@@ -19,10 +19,12 @@ import (
 	"Chinese-Chess-v3-Server/server/db"
 )
 
+// main opens the database, starts the heartbeat system and serves TCP clients on
+// 127.0.0.1:8080, one goroutine per connection. JWT_SECRET must be set (see server/jwt).
 func main() {
-	// Init database
 	fmt.Println("== Server Booting ==")
 
+	// Init database
 	dbConn, err := db.InitDB()
 	if err != nil {
 		logger.Errorf("Failed to initialize DB: %v", err)

@@ -17,6 +17,7 @@ import (
 	"Chinese-Chess-v3-Server/server/db"
 )
 
+// AuthMessage is not used (the handshake reads AuthData through Packet.ParseAuthData).
 type AuthMessage struct {
 	Type     string `json:"type"`
 	SenderId string `json:"id"`
@@ -32,7 +33,7 @@ func (s *Server) Authenticate(c *Client, scanner *bufio.Scanner, timeout time.Du
 
 	go func() {
 		// Stage 1: Version
-		// Stage 2: Email and password
+		// Stage 2: Email (sent as AuthData.Username) and password
 		stage := 1
 
 		for scanner.Scan() {

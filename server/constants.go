@@ -3,16 +3,23 @@
 // Do not distribute or modify
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
-// Update Date: 2025/11/01
-// Version: v1.0
+// Update Date: 2026/10/05
+// Version: v1.1
 /* ----- ----- ----- ----- */
 
 package server
 
 import "time"
 
+// ServerVersion is the protocol version a client must send in the first handshake stage.
 const ServerVersion = "v1.0.0"
+
+// AuthSuccessString is the Data of a successful AuthResponse (the client's AuthManager checks for it).
 const AuthSuccessString = "Taki"
+
+// Timeouts and intervals: the handshake must finish within AuthTimeoutLimit; a client silent for
+// ClientTimeoutLimit is dropped (checked every ClientHeartbeatCheckInterval); the server sends a
+// heartbeat every ServerHeartbeatSendInterval.
 
 const (
 	AuthTimeoutLimit             = 10 * time.Second

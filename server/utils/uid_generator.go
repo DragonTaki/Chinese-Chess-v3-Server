@@ -19,10 +19,12 @@ import (
 
 const (
 	MinUID       = 100_000_000
-	MaxJumpDelta = 10 // 每次隨機增加 1~10
+	MaxJumpDelta = 10 // Each new id is 1 to 10 above the largest
 )
 
-// GenerateNextUID 從資料庫查最大 UID，生成下一個遞增跳號 UID
+// GenerateNextUID returns the next user id: the largest in the database (at least MinUID - 1)
+// plus a random 1 to MaxJumpDelta. Not used yet; note User.UID is a string, so MAX(uid) compares
+// as text (to be settled with the registration flow).
 func GenerateNextUID(gormDB *gorm.DB) (int64, error) {
 	// The global source is seeded randomly since Go 1.20 (rand.Seed is deprecated).
 
@@ -36,7 +38,7 @@ func GenerateNextUID(gormDB *gorm.DB) (int64, error) {
 		maxUID = MinUID - 1
 	}
 
-	// 隨機增量
+	// Random step
 	delta := int64(rand.Intn(MaxJumpDelta) + 1)
 	nextUID := maxUID + delta
 

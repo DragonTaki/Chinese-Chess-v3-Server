@@ -3,12 +3,13 @@
 // Do not distribute or modify
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
-// Update Date: 2025/11/01
-// Version: v1.0
+// Update Date: 2026/10/05
+// Version: v1.1
 /* ----- ----- ----- ----- */
 
 package server
 
+// PacketType names a packet's kind; the values must match the client's PacketType enum (same names).
 type PacketType string
 
 const (

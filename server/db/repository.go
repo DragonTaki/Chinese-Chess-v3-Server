@@ -19,6 +19,7 @@ import (
 	"Chinese-Chess-v3-Server/server/jwt"
 )
 
+// CreateToken stores an issued token valid for ttl.
 func CreateToken(db *gorm.DB, userID string, token string, ttl time.Duration) error {
 	t := Token{
 		Token:     token,
@@ -30,12 +31,13 @@ func CreateToken(db *gorm.DB, userID string, token string, ttl time.Duration) er
 	return db.Create(&t).Error
 }
 
+// UpdateTokenHeartbeat sets a token's last-seen time to now (not called yet).
 func UpdateTokenHeartbeat(db *gorm.DB, token string) error {
 	return db.Model(&Token{}).Where("token = ?", token).Update("last_seen", time.Now()).Error
 }
 
-// Verify user's email and password
-// Return token if success
+// VerifyUser checks an email and password; on success it issues a 24-hour token (stored with
+// CreateToken), updates the last login and returns the token and true.
 func VerifyUser(db *gorm.DB, email string, password string) (string, bool) {
 	var user User
 

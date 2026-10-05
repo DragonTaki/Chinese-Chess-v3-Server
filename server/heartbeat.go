@@ -3,8 +3,8 @@
 // Do not distribute or modify
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
-// Update Date: 2025/11/01
-// Version: v1.0
+// Update Date: 2026/10/05
+// Version: v1.1
 /* ----- ----- ----- ----- */
 
 package server
@@ -15,6 +15,7 @@ import (
 	"Chinese-Chess-v3-Server/logger"
 )
 
+// StartHeartbeatSystem starts the two heartbeat goroutines: the client timeout check and the server heartbeat.
 func (s *Server) StartHeartbeatSystem() {
 	// Client heartbeat check
 	go s.CheckClientHeartbeat(ClientTimeoutLimit)
@@ -23,7 +24,8 @@ func (s *Server) StartHeartbeatSystem() {
 	go s.StartServerHeartbeat()
 }
 
-// Client heartbeat check
+// CheckClientHeartbeat drops (and disconnects) every client silent for longer than timeoutLimit,
+// checking every ClientHeartbeatCheckInterval. Any line from a client counts as a sign of life.
 func (s *Server) CheckClientHeartbeat(timeoutLimit time.Duration) {
 	ticker := time.NewTicker(ClientHeartbeatCheckInterval) // Global check interval
 	defer ticker.Stop()
@@ -47,7 +49,7 @@ func (s *Server) CheckClientHeartbeat(timeoutLimit time.Duration) {
 	}
 }
 
-// Server heartbeat broadcast
+// StartServerHeartbeat sends a heartbeat packet to every authenticated client every ServerHeartbeatSendInterval.
 func (s *Server) StartServerHeartbeat() {
 	ticker := time.NewTicker(ServerHeartbeatSendInterval) // Every interval broadcast server heartbeat
 	defer ticker.Stop()

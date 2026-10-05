@@ -19,15 +19,17 @@ import (
 
 var jwtSecret []byte
 
+// init reads the signing secret from JWT_SECRET (taken as is, quotes included); the package
+// panics at startup without it.
 func init() {
 	secret := os.Getenv("JWT_SECRET")
 	if secret == "" {
-		panic("JWT_SECRET 未設定")
+		panic("JWT_SECRET is not set")
 	}
 	jwtSecret = []byte(secret)
 }
 
-// GenerateTokenJWT 產生簽名 JWT，包含 UserID 與過期時間
+// GenerateTokenJWT returns an HS256-signed JWT with the user id, issue time and expiry (now + ttl).
 func GenerateTokenJWT(userID string, ttl time.Duration) (string, error) {
 	claims := jwt.MapClaims{
 		"userID": userID,
@@ -39,7 +41,7 @@ func GenerateTokenJWT(userID string, ttl time.Duration) (string, error) {
 	return token.SignedString(jwtSecret)
 }
 
-// ValidateTokenJWT 驗證 Token 是否有效
+// ValidateTokenJWT parses and verifies a token (signature, HS256, expiry).
 func ValidateTokenJWT(tokenStr string) (*jwt.Token, error) {
 	// Only HS256, the method GenerateTokenJWT signs with: a token naming another algorithm is rejected.
 	return jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
@@ -47,7 +49,7 @@ func ValidateTokenJWT(tokenStr string) (*jwt.Token, error) {
 	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}))
 }
 
-// ExtractUserID 從有效 Token 取出 UserID
+// ExtractUserID returns the user id of a valid token.
 func ExtractUserID(tokenStr string) (string, error) {
 	tok, err := ValidateTokenJWT(tokenStr)
 	if err != nil {

@@ -3,8 +3,8 @@
 // Do not distribute or modify
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
-// Update Date: 2025/11/01
-// Version: v1.0
+// Update Date: 2026/10/05
+// Version: v1.1
 /* ----- ----- ----- ----- */
 
 package server
@@ -71,6 +71,7 @@ func (c *Client) HeartbeatInfo() (roomId, token string) {
 	return c.RoomId, c.Token
 }
 
+// NewClient wraps a new connection of srv.
 func NewClient(conn net.Conn, srv *Server) *Client {
 	return &Client{
 		Connection: conn,
@@ -79,6 +80,9 @@ func NewClient(conn net.Conn, srv *Server) *Client {
 	}
 }
 
+// Listen serves the connection: the handshake, a welcome message, then one JSON packet per line
+// until the connection ends or the client sends "/quit". Only chat packets are handled so far
+// (broadcast to the other clients); the room / game packet types are not implemented.
 func (c *Client) Listen() {
 	defer func() {
 		c.Connection.Close()

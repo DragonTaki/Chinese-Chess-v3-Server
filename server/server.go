@@ -3,8 +3,8 @@
 // Do not distribute or modify
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
-// Update Date: 2025/11/01
-// Version: v1.0
+// Update Date: 2026/10/05
+// Version: v1.1
 /* ----- ----- ----- ----- */
 
 package server
@@ -18,12 +18,14 @@ import (
 	"gorm.io/gorm"
 )
 
+// Server holds the database and the connected clients (mu guards clients).
 type Server struct {
 	dbConn  *gorm.DB
 	clients map[*Client]bool
 	mu      sync.Mutex
 }
 
+// NewServer creates a server using dbConn.
 func NewServer(dbConn *gorm.DB) *Server {
 	return &Server{
 		dbConn:  dbConn,
@@ -31,7 +33,7 @@ func NewServer(dbConn *gorm.DB) *Server {
 	}
 }
 
-// 處理新連線
+// HandleNewClient registers a new connection and serves it until it ends (call in its own goroutine).
 func (s *Server) HandleNewClient(conn net.Conn) {
 	client := NewClient(conn, s)
 	client.Touch()
@@ -57,7 +59,7 @@ func (s *Server) snapshotClients() []*Client {
 	return list
 }
 
-// 廣播訊息給所有玩家
+// Broadcast sends pkt to every authenticated client except sender.
 func (s *Server) Broadcast(sender *Client, pkt *Packet) {
 	for _, c := range s.snapshotClients() {
 		// Connections still in the handshake receive nothing.
@@ -67,7 +69,7 @@ func (s *Server) Broadcast(sender *Client, pkt *Packet) {
 	}
 }
 
-// 客戶端離線時移除
+// RemoveClient forgets a client whose connection ended.
 func (s *Server) RemoveClient(c *Client) {
 	s.mu.Lock()
 	_, present := s.clients[c]
