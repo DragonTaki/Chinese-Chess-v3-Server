@@ -15,6 +15,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 
+	"Chinese-Chess-v3-Server/logger"
 	"Chinese-Chess-v3-Server/server/jwt"
 )
 
@@ -38,17 +39,13 @@ func UpdateTokenHeartbeat(db *gorm.DB, token string) error {
 func VerifyUser(db *gorm.DB, email string, password string) (string, bool) {
 	var user User
 
-	// Query username
-	err := db.First(&user, "email = ?", email).Error
-	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return "", false
-		}
+	// Query the user by email (unknown user and query failure both fail the login)
+	if err := db.First(&user, "email = ?", email).Error; err != nil {
 		return "", false
 	}
 
 	// Compare password hash
-	err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password))
+	err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password))
 	if err != nil {
 		return "", false
 	}
@@ -65,8 +62,10 @@ func VerifyUser(db *gorm.DB, email string, password string) (string, bool) {
 		return "", false
 	}
 
-	// Update last login
-	db.Model(&user).Update("last_login", time.Now())
+	// Update last login (a failure here does not fail the login)
+	if err := db.Model(&user).Update("last_login", time.Now()).Error; err != nil {
+		logger.Warnf("Could not update last login of %s: %v", user.UID, err)
+	}
 
 	return token, true
 }
