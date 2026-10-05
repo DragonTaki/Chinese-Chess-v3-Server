@@ -12,6 +12,7 @@ package main
 import (
 	"fmt"
 	"net"
+	"os"
 
 	"Chinese-Chess-v3-Server/logger"
 	"Chinese-Chess-v3-Server/server"
@@ -25,6 +26,7 @@ func main() {
 	dbConn, err := db.InitDB()
 	if err != nil {
 		logger.Errorf("Failed to initialize DB: %v", err)
+		os.Exit(1)
 	}
 
 	// Create server instance
@@ -37,6 +39,7 @@ func main() {
 	listener, err := net.Listen("tcp", "127.0.0.1:8080")
 	if err != nil {
 		logger.Errorf("Failed to start server: %v", err)
+		os.Exit(1)
 	}
 	defer listener.Close()
 
