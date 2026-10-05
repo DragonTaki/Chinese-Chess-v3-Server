@@ -82,9 +82,7 @@ func (s *Server) Authenticate(c *Client, scanner *bufio.Scanner, timeout time.Du
 				}
 
 				// Auth success
-				c.SenderId = pkt.SenderId
-				c.IsAuthenticated = true
-				c.LastSeenAt = time.Now()
+				c.MarkAuthenticated(pkt.SenderId, c.Token)
 
 				respPkt := CreatePacket(PacketTypeAuthResponse, "Server", "", AuthSuccessString, token)
 				c.SendPacket(respPkt)

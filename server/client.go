@@ -13,10 +13,13 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 )
 
-// Client represents a connected client
+// Client represents a connected client. LastSeenAt, IsAuthenticated, SenderId, Token and RoomId
+// are written by the client's own goroutine and read by the heartbeat goroutines: access them
+// through the methods below, which hold mu.
 type Client struct {
 	Connection      net.Conn
 	RemoteAddr      string
@@ -26,6 +29,46 @@ type Client struct {
 	SenderId        string // Format: GUID
 	Token           string
 	RoomId          string
+
+	mu sync.Mutex
+}
+
+// Touch records that the client was just heard from (LastSeenAt = now).
+func (c *Client) Touch() {
+	c.mu.Lock()
+	c.LastSeenAt = time.Now()
+	c.mu.Unlock()
+}
+
+// LastSeen returns when the client was last heard from.
+func (c *Client) LastSeen() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.LastSeenAt
+}
+
+// MarkAuthenticated records a successful handshake: the client's id and token, and now as last seen.
+func (c *Client) MarkAuthenticated(senderId, token string) {
+	c.mu.Lock()
+	c.IsAuthenticated = true
+	c.SenderId = senderId
+	c.Token = token
+	c.LastSeenAt = time.Now()
+	c.mu.Unlock()
+}
+
+// Authenticated reports whether the client has passed the handshake.
+func (c *Client) Authenticated() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.IsAuthenticated
+}
+
+// HeartbeatInfo returns the room id and token a heartbeat packet to the client carries.
+func (c *Client) HeartbeatInfo() (roomId, token string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.RoomId, c.Token
 }
 
 func NewClient(conn net.Conn, srv *Server) *Client {
@@ -57,7 +100,7 @@ func (c *Client) Listen() {
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		c.LastSeenAt = time.Now()
+		c.Touch()
 
 		if line == "/quit" {
 			break

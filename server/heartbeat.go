@@ -31,7 +31,7 @@ func (s *Server) CheckClientHeartbeat(timeoutLimit time.Duration) {
 	for range ticker.C {
 		s.mu.Lock()
 		for c := range s.clients {
-			if time.Since(c.LastSeenAt) > timeoutLimit {
+			if time.Since(c.LastSeen()) > timeoutLimit {
 				logger.Warnf("Client timed out: %s", c.RemoteAddr)
 				c.Connection.Close()
 				delete(s.clients, c)
@@ -49,7 +49,8 @@ func (s *Server) StartServerHeartbeat() {
 	for range ticker.C {
 		s.mu.Lock()
 		for c := range s.clients {
-			hbPkt := CreatePacket(PacketTypeHeartbeat, "Server", c.RoomId, "", c.Token)
+			roomId, token := c.HeartbeatInfo()
+			hbPkt := CreatePacket(PacketTypeHeartbeat, "Server", roomId, "", token)
 			c.SendPacket(hbPkt) // Send to every client
 		}
 		s.mu.Unlock()

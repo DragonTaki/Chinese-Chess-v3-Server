@@ -12,7 +12,6 @@ package server
 import (
 	"net"
 	"sync"
-	"time"
 
 	"Chinese-Chess-v3-Server/logger"
 
@@ -35,7 +34,7 @@ func NewServer(dbConn *gorm.DB) *Server {
 // 處理新連線
 func (s *Server) HandleNewClient(conn net.Conn) {
 	client := NewClient(conn, s)
-	client.LastSeenAt = time.Now()
+	client.Touch()
 
 	s.mu.Lock()
 	s.clients[client] = true
