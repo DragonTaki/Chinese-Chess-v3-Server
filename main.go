@@ -48,7 +48,7 @@ func main() {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			logger.Errorf("Connection error:", err)
+			logger.Errorf("Connection error: %v", err)
 			continue
 		}
 
