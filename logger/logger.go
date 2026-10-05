@@ -3,8 +3,8 @@
 // Do not distribute or modify
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
-// Update Date: 2025/11/01
-// Version: v1.0
+// Update Date: 2026/10/05
+// Version: v1.1
 /* ----- ----- ----- ----- */
 
 package logger
@@ -15,7 +15,8 @@ import (
 )
 
 const (
-	ColorBlack   = "\033[0m"
+	ColorReset   = "\033[0m"
+	ColorBlack   = "\033[30m"
 	ColorRed     = "\033[31m"
 	ColorGreen   = "\033[32m"
 	ColorYellow  = "\033[33m"
@@ -60,7 +61,8 @@ func LogfColor(level Level, color string, format string, args ...interface{}) {
 	}
 	output += " " + msg
 
-	fmt.Println(color + output + ColorWhite)
+	// Reset afterwards, so the terminal's own colour comes back.
+	fmt.Println(color + output + ColorReset)
 }
 
 func Infof(format string, args ...interface{}) {
