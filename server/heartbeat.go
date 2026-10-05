@@ -29,15 +29,21 @@ func (s *Server) CheckClientHeartbeat(timeoutLimit time.Duration) {
 	defer ticker.Stop()
 
 	for range ticker.C {
+		var timedOut []*Client
 		s.mu.Lock()
 		for c := range s.clients {
 			if time.Since(c.LastSeen()) > timeoutLimit {
-				logger.Warnf("Client timed out: %s", c.RemoteAddr)
-				c.Connection.Close()
+				timedOut = append(timedOut, c)
 				delete(s.clients, c)
 			}
 		}
 		s.mu.Unlock()
+
+		// Closed outside the lock; each client's Listen then ends.
+		for _, c := range timedOut {
+			logger.Warnf("Client timed out: %s", c.RemoteAddr)
+			c.Connection.Close()
+		}
 	}
 }
 
@@ -47,8 +53,7 @@ func (s *Server) StartServerHeartbeat() {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		s.mu.Lock()
-		for c := range s.clients {
+		for _, c := range s.snapshotClients() {
 			// Connections still in the handshake get no heartbeat (the auth timeout covers them).
 			if !c.Authenticated() {
 				continue
@@ -57,6 +62,5 @@ func (s *Server) StartServerHeartbeat() {
 			hbPkt := CreatePacket(PacketTypeHeartbeat, "Server", roomId, "", token)
 			c.SendPacket(hbPkt) // Send to every client
 		}
-		s.mu.Unlock()
 	}
 }

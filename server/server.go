@@ -45,12 +45,21 @@ func (s *Server) HandleNewClient(conn net.Conn) {
 	client.Listen()
 }
 
-// 廣播訊息給所有玩家
-func (s *Server) Broadcast(sender *Client, pkt *Packet) {
+// snapshotClients returns the connected clients; taken under mu, so the caller can then write to
+// them without holding mu (a slow connection must not block everyone else).
+func (s *Server) snapshotClients() []*Client {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
+	list := make([]*Client, 0, len(s.clients))
 	for c := range s.clients {
+		list = append(list, c)
+	}
+	return list
+}
+
+// 廣播訊息給所有玩家
+func (s *Server) Broadcast(sender *Client, pkt *Packet) {
+	for _, c := range s.snapshotClients() {
 		// Connections still in the handshake receive nothing.
 		if c != sender && c.Authenticated() {
 			c.SendPacket(pkt)
