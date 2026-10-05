@@ -51,7 +51,8 @@ func (s *Server) Broadcast(sender *Client, pkt *Packet) {
 	defer s.mu.Unlock()
 
 	for c := range s.clients {
-		if c != sender {
+		// Connections still in the handshake receive nothing.
+		if c != sender && c.Authenticated() {
 			c.SendPacket(pkt)
 		}
 	}

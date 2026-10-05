@@ -49,6 +49,10 @@ func (s *Server) StartServerHeartbeat() {
 	for range ticker.C {
 		s.mu.Lock()
 		for c := range s.clients {
+			// Connections still in the handshake get no heartbeat (the auth timeout covers them).
+			if !c.Authenticated() {
+				continue
+			}
 			roomId, token := c.HeartbeatInfo()
 			hbPkt := CreatePacket(PacketTypeHeartbeat, "Server", roomId, "", token)
 			c.SendPacket(hbPkt) // Send to every client
