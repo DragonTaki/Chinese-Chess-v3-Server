@@ -70,7 +70,11 @@ func (s *Server) Broadcast(sender *Client, pkt *Packet) {
 // 客戶端離線時移除
 func (s *Server) RemoveClient(c *Client) {
 	s.mu.Lock()
+	_, present := s.clients[c]
 	delete(s.clients, c)
 	s.mu.Unlock()
-	logger.Warnf("Client disconnected: %s\n", c.RemoteAddr)
+	// A client the heartbeat already dropped for timing out was logged there.
+	if present {
+		logger.Warnf("Client disconnected: %s", c.RemoteAddr)
+	}
 }
