@@ -3,13 +3,14 @@
 // Do not distribute or modify
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/02
-// Update Date: 2025/11/02
-// Version: v1.0
+// Update Date: 2026/10/05
+// Version: v1.1
 /* ----- ----- ----- ----- */
 
 package jwt
 
 import (
+	"errors"
 	"os"
 	"time"
 
@@ -40,16 +41,20 @@ func GenerateTokenJWT(userID string, ttl time.Duration) (string, error) {
 
 // ValidateTokenJWT 驗證 Token 是否有效
 func ValidateTokenJWT(tokenStr string) (*jwt.Token, error) {
+	// Only HS256, the method GenerateTokenJWT signs with: a token naming another algorithm is rejected.
 	return jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
 		return jwtSecret, nil
-	})
+	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}))
 }
 
 // ExtractUserID 從有效 Token 取出 UserID
 func ExtractUserID(tokenStr string) (string, error) {
 	tok, err := ValidateTokenJWT(tokenStr)
-	if err != nil || !tok.Valid {
+	if err != nil {
 		return "", err
+	}
+	if !tok.Valid {
+		return "", errors.New("invalid token")
 	}
 
 	if claims, ok := tok.Claims.(jwt.MapClaims); ok {
@@ -58,5 +63,5 @@ func ExtractUserID(tokenStr string) (string, error) {
 		}
 	}
 
-	return "", err
+	return "", errors.New("token has no userID claim")
 }
