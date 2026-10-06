@@ -3,8 +3,8 @@
 // Do not distribute or modify
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
-// Update Date: 2026/10/05
-// Version: v1.1
+// Update Date: 2026/10/06
+// Version: v1.2
 /* ----- ----- ----- ----- */
 
 package main
@@ -19,13 +19,17 @@ import (
 	"Chinese-Chess-v3-Server/server/db"
 )
 
-// main opens the database, starts the heartbeat system and serves TCP clients on
-// 127.0.0.1:8080, one goroutine per connection. JWT_SECRET must be set (see server/jwt).
+// DefaultListenAddr is the address served when CHESS_LISTEN_ADDR is not set (this machine only).
+const DefaultListenAddr = "127.0.0.1:8080"
+
+// main opens the database, starts the heartbeat system and serves TCP clients, one goroutine per
+// connection. Environment: JWT_SECRET (required, see server/jwt), CHESS_LISTEN_ADDR (default
+// DefaultListenAddr), CHESS_DB_PATH (default db.DefaultPath).
 func main() {
 	fmt.Println("== Server Booting ==")
 
 	// Init database
-	dbConn, err := db.InitDB()
+	dbConn, err := db.InitDB(envOr("CHESS_DB_PATH", db.DefaultPath))
 	if err != nil {
 		logger.Errorf("Failed to initialize DB: %v", err)
 		os.Exit(1)
@@ -38,14 +42,15 @@ func main() {
 	srv.StartHeartbeatSystem()
 
 	// Start TCP listener
-	listener, err := net.Listen("tcp", "127.0.0.1:8080")
+	addr := envOr("CHESS_LISTEN_ADDR", DefaultListenAddr)
+	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		logger.Errorf("Failed to start server: %v", err)
 		os.Exit(1)
 	}
 	defer listener.Close()
 
-	logger.Infof("Chess server started at 127.0.0.1:8080")
+	logger.Infof("Chess server started at %s", addr)
 
 	for {
 		conn, err := listener.Accept()
@@ -57,4 +62,12 @@ func main() {
 		// Handle client
 		go srv.HandleNewClient(conn)
 	}
+}
+
+// envOr returns the environment variable name, or fallback when it is unset or empty.
+func envOr(name, fallback string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	return fallback
 }
