@@ -125,12 +125,19 @@ func (c *Client) Listen() {
 			continue
 		}
 
-		// Broadcast chat packet to other clients, as sent by this client's account: the sender id
-		// the client wrote is replaced and its token never goes to anyone else.
-		if pkt.Type == PacketTypeChat {
+		switch pkt.Type {
+		case PacketTypeChat:
+			// Broadcast to the other clients, as sent by this client's account: the sender id the
+			// client wrote is replaced and its token never goes to anyone else.
 			pkt.SenderId = c.Id()
 			pkt.Token = ""
 			c.Server.Broadcast(c, pkt)
+		case PacketTypeHeartbeat:
+			// A sign of life only (already recorded above).
+		default:
+			// Rooms and games are not implemented yet; anything else is not a client packet.
+			errPkt := CreatePacket(PacketTypeError, "Server", "", fmt.Sprintf("Unsupported packet type: %s", pkt.Type), "")
+			c.SendPacket(errPkt)
 		}
 	}
 }
