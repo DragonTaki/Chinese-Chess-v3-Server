@@ -17,6 +17,14 @@ const ServerVersion = "v1.0.0"
 // AuthSuccessString is the Data of a successful AuthResponse (the client's AuthManager checks for it).
 const AuthSuccessString = "Taki"
 
+// The Data of a failed AuthResponse: why the handshake failed (any Data other than
+// AuthSuccessString is a failure to the client). The connection is closed after it.
+const (
+	AuthFailVersionMismatch    = "VersionMismatch"
+	AuthFailMissingCredentials = "MissingCredentials"
+	AuthFailInvalidCredentials = "InvalidCredentials"
+)
+
 // Timeouts and intervals: the handshake must finish within AuthTimeoutLimit; a client silent for
 // ClientTimeoutLimit is dropped (checked every ClientHeartbeatCheckInterval); the server sends a
 // heartbeat every ServerHeartbeatSendInterval.

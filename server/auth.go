@@ -59,6 +59,7 @@ func (s *Server) Authenticate(c *Client, scanner *bufio.Scanner, timeout time.Du
 			case 1:
 				if ad.Version != ServerVersion {
 					logger.Warnf("Version mismatch from %s: %s != %s", c.RemoteAddr, ad.Version, ServerVersion)
+					s.rejectAuth(c, AuthFailVersionMismatch)
 					authCh <- false
 					return
 				}
@@ -71,6 +72,7 @@ func (s *Server) Authenticate(c *Client, scanner *bufio.Scanner, timeout time.Du
 			case 2:
 				if ad.Username == "" || ad.Password == "" {
 					logger.Warnf("Missing username/password from %s", c.RemoteAddr)
+					s.rejectAuth(c, AuthFailMissingCredentials)
 					authCh <- false
 					return
 				}
@@ -78,6 +80,7 @@ func (s *Server) Authenticate(c *Client, scanner *bufio.Scanner, timeout time.Du
 				token, ok := db.VerifyUser(dbConn, ad.Username, ad.Password)
 				if !ok {
 					logger.Warnf("Invalid credentials from %s", c.RemoteAddr)
+					s.rejectAuth(c, AuthFailInvalidCredentials)
 					authCh <- false
 					return
 				}
@@ -104,4 +107,9 @@ func (s *Server) Authenticate(c *Client, scanner *bufio.Scanner, timeout time.Du
 		logger.Warnf("Client %s failed to authenticate in time", c.RemoteAddr)
 		return false
 	}
+}
+
+// rejectAuth tells the client why its handshake failed (a failed AuthResponse, reason in Data).
+func (s *Server) rejectAuth(c *Client, reason string) {
+	c.SendPacket(CreatePacket(PacketTypeAuthResponse, "Server", "", reason, ""))
 }
