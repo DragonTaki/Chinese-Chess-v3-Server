@@ -25,6 +25,9 @@ const (
 	AuthFailInvalidCredentials = "InvalidCredentials"
 )
 
+// MaxPacketSize is the longest packet line accepted (bytes); a longer line ends the connection.
+const MaxPacketSize = 1 << 20
+
 // Timeouts and intervals: the handshake must finish within AuthTimeoutLimit; a client silent for
 // ClientTimeoutLimit is dropped (checked every ClientHeartbeatCheckInterval); the server sends a
 // heartbeat every ServerHeartbeatSendInterval.

@@ -15,6 +15,8 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"Chinese-Chess-v3-Server/logger"
 )
 
 // Client represents a connected client. LastSeenAt, IsAuthenticated, SenderId, Token and RoomId
@@ -99,6 +101,7 @@ func (c *Client) Listen() {
 	// One reader for the whole connection: the auth stage and the chat loop below share it, so
 	// nothing the client sends right after authenticating is lost in a second reader's buffer.
 	scanner := bufio.NewScanner(c.Connection)
+	scanner.Buffer(make([]byte, 0, 64*1024), MaxPacketSize)
 
 	// Auth session
 	if ok := c.Server.Authenticate(c, scanner, AuthTimeoutLimit); !ok { // If auth fail
@@ -139,6 +142,11 @@ func (c *Client) Listen() {
 			errPkt := CreatePacket(PacketTypeError, "Server", "", fmt.Sprintf("Unsupported packet type: %s", pkt.Type), "")
 			c.SendPacket(errPkt)
 		}
+	}
+
+	// The loop ends on EOF (no error), on a closed connection, or on a line over MaxPacketSize.
+	if err := scanner.Err(); err != nil {
+		logger.Warnf("Read error from %s: %v", c.RemoteAddr, err)
 	}
 }
 
