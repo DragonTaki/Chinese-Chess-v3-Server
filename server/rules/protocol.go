@@ -38,13 +38,16 @@ type Position struct {
 type TeamSplit map[string]map[string]int
 
 // ThreeKingdoms is a Three Kingdoms game's state, each array by player (Player1 first): the team
-// each claimed (0 = none yet, 1..3), the points, whether it resigned, and the order it went out
-// in (0 = still in, 1 = first out...).
+// each claimed (0 = none yet, 1..3), the points, whether it resigned, whether its clock ran out
+// (it left), the order it went out in (0 = still in, 1 = first out...) and when it last scored
+// (0 = never, 1 = the game's first score...; equal scores rank whoever was first ahead).
 type ThreeKingdoms struct {
-	Teams    [3]int  `json:"teams"`
-	Scores   [3]int  `json:"scores"`
-	Resigned [3]bool `json:"resigned"`
-	OutOrder [3]int  `json:"outOrder"`
+	Teams      [3]int  `json:"teams"`
+	Scores     [3]int  `json:"scores"`
+	Resigned   [3]bool `json:"resigned"`
+	TimedOut   [3]bool `json:"timedOut"`
+	OutOrder   [3]int  `json:"outOrder"`
+	ScoreOrder [3]int  `json:"scoreOrder"`
 }
 
 // Move is a move by squares ([x, y]).
