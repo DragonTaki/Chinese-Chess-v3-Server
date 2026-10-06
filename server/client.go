@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"Chinese-Chess-v3-Server/logger"
+	"Chinese-Chess-v3-Server/server/db"
 )
 
 // Client represents a connected client. LastSeenAt, IsAuthenticated, SenderId, Token and RoomId
@@ -33,6 +34,9 @@ type Client struct {
 	RoomId          string
 
 	mu sync.Mutex
+
+	// When the token's last-seen time was last written (only the client's own goroutine uses it).
+	tokenSeenWrittenAt time.Time
 }
 
 // Touch records that the client was just heard from (LastSeenAt = now).
@@ -136,7 +140,8 @@ func (c *Client) Listen() {
 			pkt.Token = ""
 			c.Server.Broadcast(c, pkt)
 		case PacketTypeHeartbeat:
-			// A sign of life only (already recorded above).
+			// A sign of life (already recorded above); also kept on the session token, throttled.
+			c.recordTokenSeen()
 		default:
 			// Rooms and games are not implemented yet; anything else is not a client packet.
 			errPkt := CreatePacket(PacketTypeError, "Server", "", fmt.Sprintf("Unsupported packet type: %s", pkt.Type), "")
@@ -153,4 +158,17 @@ func (c *Client) Listen() {
 // SendPacket sends a Packet to the client as JSON
 func (c *Client) SendPacket(pkt *Packet) {
 	fmt.Fprintln(c.Connection, pkt.SerializePacket())
+}
+
+// recordTokenSeen writes the token's last-seen time (db.UpdateTokenHeartbeat), at most once per
+// TokenSeenWriteInterval. Called from the client's own goroutine only.
+func (c *Client) recordTokenSeen() {
+	if time.Since(c.tokenSeenWrittenAt) < TokenSeenWriteInterval {
+		return
+	}
+	c.tokenSeenWrittenAt = time.Now()
+	_, token := c.HeartbeatInfo()
+	if err := db.UpdateTokenHeartbeat(c.Server.dbConn, token); err != nil {
+		logger.Warnf("Could not update the token of %s: %v", c.RemoteAddr, err)
+	}
 }

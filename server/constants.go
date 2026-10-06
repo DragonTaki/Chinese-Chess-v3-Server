@@ -37,4 +37,8 @@ const (
 	ClientTimeoutLimit           = 1 * time.Minute
 	ClientHeartbeatCheckInterval = 10 * time.Second
 	ServerHeartbeatSendInterval  = 3 * time.Second
+
+	// TokenSeenWriteInterval: a client's heartbeats update its token's last-seen time in the
+	// database at most this often (the client sends one every second).
+	TokenSeenWriteInterval = 30 * time.Second
 )

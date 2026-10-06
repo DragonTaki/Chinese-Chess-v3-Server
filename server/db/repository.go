@@ -31,7 +31,7 @@ func CreateToken(db *gorm.DB, userID string, token string, ttl time.Duration) er
 	return db.Create(&t).Error
 }
 
-// UpdateTokenHeartbeat sets a token's last-seen time to now (not called yet).
+// UpdateTokenHeartbeat sets a token's last-seen time to now (called on client heartbeats, throttled).
 func UpdateTokenHeartbeat(db *gorm.DB, token string) error {
 	return db.Model(&Token{}).Where("token = ?", token).Update("last_seen", time.Now()).Error
 }
