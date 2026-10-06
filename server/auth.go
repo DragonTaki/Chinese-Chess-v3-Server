@@ -3,8 +3,8 @@
 // Do not distribute or modify
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
-// Update Date: 2026/10/05
-// Version: v1.1
+// Update Date: 2026/10/06
+// Version: v1.2
 /* ----- ----- ----- ----- */
 
 package server
@@ -77,7 +77,7 @@ func (s *Server) Authenticate(c *Client, scanner *bufio.Scanner, timeout time.Du
 					return
 				}
 
-				token, ok := db.VerifyUser(dbConn, ad.Username, ad.Password)
+				uid, token, ok := db.VerifyUser(dbConn, ad.Username, ad.Password)
 				if !ok {
 					logger.Warnf("Invalid credentials from %s", c.RemoteAddr)
 					s.rejectAuth(c, AuthFailInvalidCredentials)
@@ -85,8 +85,9 @@ func (s *Server) Authenticate(c *Client, scanner *bufio.Scanner, timeout time.Du
 					return
 				}
 
-				// Auth success
-				c.MarkAuthenticated(pkt.SenderId, token)
+				// Auth success. The client is known by its account's id from now on, never by the
+				// id it puts in its packets (the client is untrusted).
+				c.MarkAuthenticated(uid, token)
 
 				respPkt := CreatePacket(PacketTypeAuthResponse, "Server", "", AuthSuccessString, token)
 				c.SendPacket(respPkt)

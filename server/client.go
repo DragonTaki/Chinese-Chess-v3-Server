@@ -3,8 +3,8 @@
 // Do not distribute or modify
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
-// Update Date: 2026/10/05
-// Version: v1.1
+// Update Date: 2026/10/06
+// Version: v1.2
 /* ----- ----- ----- ----- */
 
 package server
@@ -26,7 +26,7 @@ type Client struct {
 	Server          *Server
 	LastSeenAt      time.Time
 	IsAuthenticated bool
-	SenderId        string // Format: GUID
+	SenderId        string // The account's user id, set when authenticated
 	Token           string
 	RoomId          string
 
@@ -62,6 +62,13 @@ func (c *Client) Authenticated() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.IsAuthenticated
+}
+
+// Id returns the client's account id (empty before the handshake).
+func (c *Client) Id() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.SenderId
 }
 
 // HeartbeatInfo returns the room id and token a heartbeat packet to the client carries.
@@ -118,8 +125,11 @@ func (c *Client) Listen() {
 			continue
 		}
 
-		// Broadcast chat packet to other clients
+		// Broadcast chat packet to other clients, as sent by this client's account: the sender id
+		// the client wrote is replaced and its token never goes to anyone else.
 		if pkt.Type == PacketTypeChat {
+			pkt.SenderId = c.Id()
+			pkt.Token = ""
 			c.Server.Broadcast(c, pkt)
 		}
 	}
