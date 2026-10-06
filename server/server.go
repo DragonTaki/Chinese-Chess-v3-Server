@@ -14,21 +14,24 @@ import (
 	"sync"
 
 	"Chinese-Chess-v3-Server/logger"
+	"Chinese-Chess-v3-Server/server/rules"
 
 	"gorm.io/gorm"
 )
 
-// Server holds the database and the connected clients (mu guards clients).
+// Server holds the database, the rules host and the connected clients (mu guards clients).
 type Server struct {
 	dbConn  *gorm.DB
+	rules   *rules.Host // checks moves; nil when CHESS_RULES_PATH is not set (games are not implemented yet)
 	clients map[*Client]bool
 	mu      sync.Mutex
 }
 
-// NewServer creates a server using dbConn.
-func NewServer(dbConn *gorm.DB) *Server {
+// NewServer creates a server using dbConn and the rules host (may be nil).
+func NewServer(dbConn *gorm.DB, rulesHost *rules.Host) *Server {
 	return &Server{
 		dbConn:  dbConn,
+		rules:   rulesHost,
 		clients: make(map[*Client]bool),
 	}
 }
