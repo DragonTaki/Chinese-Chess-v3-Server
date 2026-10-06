@@ -33,6 +33,10 @@ type Position struct {
 	ThreeKingdoms *ThreeKingdoms `json:"threeKingdoms,omitempty"`
 }
 
+// TeamSplit is a Three Kingdoms custom team split: colour ("Red", "Black") -> piece type ->
+// team (1..3). Every team needs at least one piece; a team's threshold is its piece count.
+type TeamSplit map[string]map[string]int
+
 // ThreeKingdoms is a Three Kingdoms game's state, each array by player (Player1 first): the team
 // each claimed (0 = none yet, 1..3), the points, whether it resigned, and the order it went out
 // in (0 = still in, 1 = first out...).
@@ -74,12 +78,14 @@ func FlipAction(x, y int) Action {
 	return Action{Type: "flip", At: &[2]int{x, y}}
 }
 
-// Game is what every request about a game carries: the kind, the game's rule switches (the
-// names of the client's Rules, e.g. "canCaptureHiddenPiece"; nil for the defaults) and the position.
+// Game is what every request about a game carries: the kind, the game's rules (the names of
+// the client's Rules: switches such as "canCaptureHiddenPiece": true, and Three Kingdoms'
+// "halfCrossWinCondition": "Points" and "halfCrossTeams" (colour -> type -> team, TeamSplit);
+// nil for the defaults) and the position.
 type Game struct {
-	Kind     string          `json:"kind"`
-	Rules    map[string]bool `json:"rules,omitempty"`
-	Position Position        `json:"position"`
+	Kind     string         `json:"kind"`
+	Rules    map[string]any `json:"rules,omitempty"`
+	Position Position       `json:"position"`
 }
 
 // Record is a validated move's record.

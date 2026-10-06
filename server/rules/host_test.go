@@ -153,6 +153,21 @@ func TestThreeKingdomsFlip(t *testing.T) {
 		r.Position.ThreeKingdoms == nil || r.Position.ThreeKingdoms.Teams != [3]int{2, 0, 0} {
 		t.Fatalf("flip: %+v, %v", r, err)
 	}
+
+	// A custom split: the red chariots in team 3.
+	split := TeamSplit{"Red": {}, "Black": {}}
+	for _, ty := range []string{"General", "Advisor", "Elephant", "Chariot", "Horse", "Cannon", "Soldier"} {
+		split["Red"][ty], split["Black"][ty] = 2, 3
+		if ty == "General" || ty == "Soldier" {
+			split["Red"][ty], split["Black"][ty] = 1, 1
+		}
+	}
+	split["Red"]["Chariot"] = 3
+	game.Rules = map[string]any{"halfCrossTeams": split}
+	r, err = h.Validate(ctx(t), game, FlipAction(0, 0), nil)
+	if err != nil || r.Position.ThreeKingdoms.Teams != [3]int{3, 0, 0} {
+		t.Fatalf("custom split flip: %+v, %v", r, err)
+	}
 }
 
 // Many goroutines at once: every answer reaches its own caller.
