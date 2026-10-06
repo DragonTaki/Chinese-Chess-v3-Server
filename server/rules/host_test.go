@@ -4,7 +4,7 @@
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2026/10/06
 // Update Date: 2026/10/06
-// Version: v1.0
+// Version: v1.1
 /* ----- ----- ----- ----- */
 
 package rules
@@ -132,7 +132,26 @@ func TestBadRequest(t *testing.T) {
 	h := startHost(t)
 	_, err := h.Validate(ctx(t), Game{Kind: "ThreeKingdoms", Position: startPosition()}, MoveAction(0, 0, 0, 1), nil)
 	if !errors.Is(err, ErrBadRequest) {
-		t.Fatalf("unsupported kind: want ErrBadRequest, got %v", err)
+		t.Fatalf("Full-board position for ThreeKingdoms: want ErrBadRequest, got %v", err)
+	}
+}
+
+// Three Kingdoms: the state travels with the position; a flip claims the flipped piece's team.
+func TestThreeKingdomsFlip(t *testing.T) {
+	h := startHost(t)
+	game := Game{Kind: "ThreeKingdoms", Position: Position{
+		ToMove: 1,
+		Pieces: []Piece{
+			{Type: "Chariot", Color: "Red", X: 0, Y: 0},
+			{Type: "Soldier", Color: "Black", X: 2, Y: 0},
+			{Type: "General", Color: "Red", X: 8, Y: 4},
+		},
+		ThreeKingdoms: &ThreeKingdoms{},
+	}}
+	r, err := h.Validate(ctx(t), game, FlipAction(0, 0), nil)
+	if err != nil || !r.Legal || !r.FactionsDecided || r.Position.ToMove != 2 ||
+		r.Position.ThreeKingdoms == nil || r.Position.ThreeKingdoms.Teams != [3]int{2, 0, 0} {
+		t.Fatalf("flip: %+v, %v", r, err)
 	}
 }
 

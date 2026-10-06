@@ -4,17 +4,17 @@
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2026/10/06
 // Update Date: 2026/10/06
-// Version: v1.0
+// Version: v1.1
 /* ----- ----- ----- ----- */
 
 package rules
 
 // The rules host protocol's messages (docs/RULES-HOST.md in the record repo). Enum values are
-// the C# names: kinds Traditional / DarkHalf / OpenHalf, types General / Advisor / Elephant /
-// Chariot / Horse / Cannon / Soldier, colours Red / Black.
+// the C# names: kinds Traditional / Flip / DarkHalf / OpenHalf / ThreeKingdoms, types General /
+// Advisor / Elephant / Chariot / Horse / Cannon / Soldier, colours Red / Black.
 
-// Piece is one piece of a position. Side is the owning player (1 / 2), 0 while a dark-chess
-// game's factions are undecided. A face-down piece carries its real identity: positions only
+// Piece is one piece of a position. Side is the owning player (1 / 2; Three Kingdoms 1..3), 0
+// while a dark-chess game's factions (a Three Kingdoms team) are undecided. A face-down piece carries its real identity: positions only
 // travel between the server and the rules host, never to a client.
 type Piece struct {
 	Type   string `json:"type"`
@@ -25,10 +25,22 @@ type Piece struct {
 	FaceUp bool   `json:"faceUp"`
 }
 
-// Position is whose turn it is (1 / 2) and every piece on the board.
+// Position is whose turn it is (1 / 2; Three Kingdoms 1..3), every piece on the board and, for
+// Three Kingdoms only, the game's state beyond the pieces.
 type Position struct {
-	ToMove int     `json:"toMove"`
-	Pieces []Piece `json:"pieces"`
+	ToMove        int            `json:"toMove"`
+	Pieces        []Piece        `json:"pieces"`
+	ThreeKingdoms *ThreeKingdoms `json:"threeKingdoms,omitempty"`
+}
+
+// ThreeKingdoms is a Three Kingdoms game's state, each array by player (Player1 first): the team
+// each claimed (0 = none yet, 1..3), the points, whether it resigned, and the order it went out
+// in (0 = still in, 1 = first out...).
+type ThreeKingdoms struct {
+	Teams    [3]int  `json:"teams"`
+	Scores   [3]int  `json:"scores"`
+	Resigned [3]bool `json:"resigned"`
+	OutOrder [3]int  `json:"outOrder"`
 }
 
 // Move is a move by squares ([x, y]).
@@ -78,10 +90,12 @@ type Record struct {
 	Revealed *Piece `json:"revealed"`
 }
 
-// GameOver is how a game ended: the winner (1 / 2; 0 for a draw) and why (GameOverReason name).
+// GameOver is how a game ended: the winner (1 / 2; Three Kingdoms 1..3; 0 for a draw), why
+// (GameOverReason name) and, Three Kingdoms only, every player's place (first first).
 type GameOver struct {
-	Winner int    `json:"winner"`
-	Reason string `json:"reason"`
+	Winner  int    `json:"winner"`
+	Reason  string `json:"reason"`
+	Ranking []int  `json:"ranking,omitempty"`
 }
 
 // ValidateResult is the answer to Validate. When Legal is false only Reason is set
