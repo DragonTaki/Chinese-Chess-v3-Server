@@ -10,6 +10,8 @@
 package jwt
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"os"
 	"time"
@@ -29,12 +31,18 @@ func init() {
 	jwtSecret = []byte(secret)
 }
 
-// GenerateTokenJWT returns an HS256-signed JWT with the user id, issue time and expiry (now + ttl).
+// GenerateTokenJWT returns an HS256-signed JWT with the user id, issue time, expiry (now + ttl) and a
+// random jti, so two tokens issued for one user in the same second still differ (tokens are stored unique).
 func GenerateTokenJWT(userID string, ttl time.Duration) (string, error) {
+	id := make([]byte, 16)
+	if _, err := rand.Read(id); err != nil {
+		return "", err
+	}
 	claims := jwt.MapClaims{
 		"userID": userID,
 		"exp":    time.Now().Add(ttl).Unix(),
 		"iat":    time.Now().Unix(),
+		"jti":    hex.EncodeToString(id),
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
