@@ -11,6 +11,8 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -224,5 +226,67 @@ func TestResumeRacesDeadline(t *testing.T) {
 			s.endGame(g, 1, "Resign")
 			g.mu.Unlock()
 		}
+	}
+}
+
+// A player away when the game ends (here its step clock runs out) gets the EndGame, with the game's
+// id, at its next login, once; the opponent's EndGame carries the id too.
+func TestMissedResultDeliveredOnce(t *testing.T) {
+	s := testServer(t)
+	g, a, b, ca, cb := runningGame(t, s, TimerSettings{Mode: "CountDown", TotalMinutes: 10, StepSeconds: 1, StepTimer: true})
+	ca.Close()
+	s.RemoveClient(a)
+	select {
+	case <-g.done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("game did not end")
+	}
+	flush(t, b, cb)
+	if ends := cb.packets(PacketTypeEndGame); len(ends) != 1 || !strings.Contains(ends[0].Data, `"gameId":"g"`) {
+		t.Fatalf("opponent EndGame %v", ends)
+	}
+
+	c, fc := connectFrom(s, "1.34.0.1:1")
+	s.login(c, "a", "A", "")
+	flush(t, c, fc)
+	ends := fc.packets(PacketTypeEndGame)
+	if len(ends) != 1 {
+		t.Fatalf("EndGame %v", ends)
+	}
+	var e EndGameData
+	json.Unmarshal([]byte(ends[0].Data), &e)
+	if e.Winner != 2 || e.Reason != ClockReasonTimeUp || e.GameId != "g" {
+		t.Fatalf("end %+v", e)
+	}
+	if auth := fc.packets(PacketTypeAuthResponse); len(auth) != 1 {
+		t.Fatal("no AuthResponse")
+	}
+
+	c.Close()
+	s.RemoveClient(c)
+	c2, fc2 := connectFrom(s, "1.34.0.1:2")
+	s.login(c2, "a", "A", "")
+	flush(t, c2, fc2)
+	if len(fc2.packets(PacketTypeEndGame)) != 0 {
+		t.Fatal("result delivered twice")
+	}
+}
+
+// Pending results expire and the store is bounded.
+func TestPendingResultsBounds(t *testing.T) {
+	p := newPendingResults()
+	now := time.Now()
+	p.put("old", "r", EndGameData{}, now.Add(-pendingResultTTL-time.Second))
+	if _, ok := p.take("old", now); ok {
+		t.Fatal("expired result delivered")
+	}
+	for i := 0; i < pendingResultMax+10; i++ {
+		p.put(fmt.Sprint("u", i), "r", EndGameData{}, now.Add(time.Duration(i)*time.Millisecond))
+	}
+	if len(p.list) != pendingResultMax {
+		t.Fatalf("size %d", len(p.list))
+	}
+	if _, ok := p.take("u0", now); ok {
+		t.Fatal("oldest not evicted")
 	}
 }

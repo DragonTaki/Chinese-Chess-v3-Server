@@ -27,7 +27,8 @@ type Server struct {
 	clients map[*Client]bool
 	rooms   *RoomManager
 	mu      sync.Mutex
-	loginMu sync.Mutex // one login admitted at a time (login)
+	loginMu sync.Mutex      // one login admitted at a time (login)
+	pending *pendingResults // results of games that ended while a player was away (delivered at their next login)
 }
 
 // NewServer creates a server using dbConn and the rules host (may be nil).
@@ -37,6 +38,7 @@ func NewServer(dbConn *gorm.DB, rulesHost *rules.Host) *Server {
 		rules:   rulesHost,
 		clients: make(map[*Client]bool),
 		rooms:   NewRoomManager(),
+		pending: newPendingResults(),
 	}
 }
 

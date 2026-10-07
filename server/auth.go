@@ -11,6 +11,7 @@ package server
 
 import (
 	"bufio"
+	"encoding/json"
 	"time"
 
 	"Chinese-Chess-v3-Server/logger"
@@ -138,6 +139,12 @@ func (s *Server) login(c *Client, uid, name, token string) bool {
 	// The account's seat (a game or a waiting room) moves to c before any replaced connection is
 	// closed, so that connection's disconnect finds no seat to leave or mark away.
 	s.resume(c)
+
+	// The result of a game that ended while this account was away, once.
+	if r, ok := s.pending.take(uid, time.Now()); ok {
+		data, _ := json.Marshal(r.data)
+		c.SendPacket(CreatePacket(PacketTypeEndGame, "Server", r.roomId, string(data), ""))
+	}
 
 	for _, o := range others {
 		logger.Infof("Connection %s of %s replaced by a new login from %s", o.RemoteAddr, uid, c.RemoteAddr)

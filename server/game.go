@@ -263,10 +263,12 @@ type GameUpdateData struct {
 	Clocks   *ClocksData     `json:"clocks,omitempty"`
 }
 
-// EndGameData is how the game ended: the winner (player number; 0 for a draw) and why.
+// EndGameData is how the game ended: the winner (player number; 0 for a draw) and why, and the
+// game's id.
 type EndGameData struct {
 	Winner int    `json:"winner"`
 	Reason string `json:"reason"`
+	GameId string `json:"gameId,omitempty"`
 }
 
 // GameActionData is what a player wants to do: Type "move" (From, To) or "resign".
@@ -554,7 +556,7 @@ func (s *Server) endGame(g *game, winner int, reason string) {
 	g.over = true
 	close(g.done)
 	g.stopDeadline()
-	data, _ := json.Marshal(EndGameData{Winner: winner, Reason: reason})
+	data, _ := json.Marshal(EndGameData{Winner: winner, Reason: reason, GameId: g.id})
 	for _, p := range g.players {
 		p.conn.SetInGame(false)
 		p.conn.SendPacket(CreatePacket(PacketTypeEndGame, "Server", g.room.Id, string(data), ""))
@@ -585,6 +587,8 @@ func (s *Server) endGame(g *game, winner int, reason string) {
 	// host if it was; the room goes when empty).
 	for i, p := range g.players {
 		if !g.clocks.away[i].IsZero() {
+			// It missed the EndGame: it gets it when it logs in again.
+			s.pending.put(p.id, g.room.Id, EndGameData{Winner: winner, Reason: reason, GameId: g.id}, time.Now())
 			if r, _ := s.rooms.Leave(p.conn); r != nil {
 				p.conn.SetRoom("")
 			}
