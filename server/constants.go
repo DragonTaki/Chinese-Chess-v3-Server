@@ -3,8 +3,8 @@
 // Do not distribute or modify
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
-// Update Date: 2026/10/05
-// Version: v1.1
+// Update Date: 2026/10/07
+// Version: v1.2
 /* ----- ----- ----- ----- */
 
 package server
@@ -42,3 +42,14 @@ const (
 	// database at most this often (the client sends one every second).
 	TokenSeenWriteInterval = 30 * time.Second
 )
+
+// Game end reasons of the clocks: the mover's count-down time ran out (TimeUp), or a side was away
+// longer than DisconnectGraceSeat where no step time would end its game (Disconnect).
+const (
+	ClockReasonTimeUp     = "TimeUp"
+	ClockReasonDisconnect = "Disconnect"
+)
+
+// DisconnectGraceSeat is how long an away side keeps its seat (count-up clocks, or count-down
+// without the step timer) before it loses by ClockReasonDisconnect.
+const DisconnectGraceSeat = 15 * time.Second
