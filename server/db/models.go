@@ -40,7 +40,8 @@ type Game struct {
 	Players   string // The players' user ids in turn order (Player1 first), JSON array
 	Winner    string // The winner's user id; "" for a draw
 	Reason    string // GameOverReason name
-	Moves     string // The moves in order, JSON array of {from, to, notation}
+	Moves     string // The moves in order, JSON array of {from, to, notation, ms}
+	Clocks    string // The clocks when the game ended, JSON {sides:[{usedMs,stepMs}], toMove, away}
 	StartedAt time.Time
 	EndedAt   time.Time
 }

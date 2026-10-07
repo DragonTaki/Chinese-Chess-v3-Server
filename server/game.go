@@ -46,6 +46,7 @@ type moveEntry struct {
 	From     [2]int `json:"from"`
 	To       [2]int `json:"to"`
 	Notation string `json:"notation"`
+	Ms       int64  `json:"ms"` // the time the mover spent on the move (before the increment)
 }
 
 // game is a room's game in progress. Guarded by its own lock: actions of one game are handled one
@@ -99,6 +100,13 @@ func (g *game) clocksAt(now time.Time) *ClocksData {
 		out.Away[i] = !g.clocks.away[i].IsZero()
 	}
 	return out
+}
+
+// commitMove records the legal move from -> to received at now (g's lock held): the entry with the
+// time the mover spent on it, taken before the clocks add it and the increment.
+func (g *game) commitMove(from, to [2]int, notation string, now time.Time) {
+	g.moves = append(g.moves, moveEntry{From: from, To: to, Notation: notation, Ms: g.clocks.elapsed(now).Milliseconds()})
+	g.clocks.commitMove(now)
 }
 
 // otherSide is the winner (player number) when side index loses: the other player of a two-player
@@ -430,7 +438,6 @@ func (s *Server) handleGameAction(c *Client, pkt *Packet) {
 			return
 		}
 		g.position = *res.Position
-		g.moves = append(g.moves, moveEntry{From: *act.From, To: *act.To, Notation: res.Record.Notation})
 		move := rules.Move{From: *act.From, To: *act.To}
 		if res.Record.Captured != nil {
 			g.history = rules.History{}
@@ -438,7 +445,7 @@ func (s *Server) handleGameAction(c *Client, pkt *Packet) {
 			g.history.PliesSinceCapture++
 			g.history.RecentMoves = append(g.history.RecentMoves, move)
 		}
-		g.clocks.commitMove(now)
+		g.commitMove(*act.From, *act.To, res.Record.Notation, now)
 		if res.GameOver == nil {
 			s.armDeadline(g, now)
 		}
@@ -482,6 +489,7 @@ func (s *Server) endGame(g *game, winner int, reason string) {
 		ID: g.id, Kind: g.kind, Mode: g.room.Settings.Mode, Players: mustJSON(ids), Reason: reason,
 		Moves: mustJSON(g.moves), StartedAt: g.startedAt, EndedAt: time.Now(),
 	}
+	record.Clocks = mustJSON(g.clocksAt(record.EndedAt))
 	settings := g.room.Settings
 	record.Rules = mustJSON(struct {
 		Rules map[string]bool `json:"rules"`
