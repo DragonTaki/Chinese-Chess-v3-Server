@@ -4,7 +4,7 @@
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
 // Update Date: 2026/10/07
-// Version: v1.2
+// Version: v1.3
 /* ----- ----- ----- ----- */
 
 package server
@@ -29,17 +29,26 @@ const (
 const MaxPacketSize = 1 << 20
 
 // Timeouts and intervals: the handshake must finish within AuthTimeoutLimit; a client silent for
-// ClientTimeoutLimit is dropped (checked every ClientHeartbeatCheckInterval); the server sends a
-// heartbeat every ServerHeartbeatSendInterval.
+// ClientTimeoutLimit is dropped (its read deadline, and a check every ClientHeartbeatCheckInterval),
+// one playing a running game already when silent for InGameTimeoutLimit (its read deadline), so a
+// disconnect is noticed within a second; the server sends a heartbeat every
+// ServerHeartbeatSendInterval.
 
 const (
 	AuthTimeoutLimit             = 10 * time.Second
 	ClientTimeoutLimit           = 1 * time.Minute
 	ClientHeartbeatCheckInterval = 10 * time.Second
 	ServerHeartbeatSendInterval  = 3 * time.Second
+	InGameTimeoutLimit           = 1 * time.Second
+
+	// InGameHeartbeatInterval is how often a client playing a game is expected to send a Heartbeat
+	// packet (from its StartGame until its EndGame), well inside InGameTimeoutLimit; not used by
+	// the server itself.
+	InGameHeartbeatInterval = 300 * time.Millisecond
 
 	// TokenSeenWriteInterval: a client's heartbeats update its token's last-seen time in the
-	// database at most this often (the client sends one every second).
+	// database at most this often (the client sends one every second, every
+	// InGameHeartbeatInterval while it plays).
 	TokenSeenWriteInterval = 30 * time.Second
 )
 

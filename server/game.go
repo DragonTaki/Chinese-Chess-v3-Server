@@ -26,7 +26,10 @@ import (
 // every action with the rules host, decides the end and records the game; a client only sends what
 // it wants to do. Traditional (Full board) only so far. The clocks are the server's too: a move is
 // timed from when its packet is received, and the game ends by TimeUp when the mover's time runs
-// out (a deadline timer per game).
+// out (a deadline timer per game). A player whose connection ends during the game keeps its seat
+// and is away: its clocks keep running, and (as clockState.expiry decides) it loses by TimeUp when
+// its step time runs out, or by Disconnect after DisconnectGraceSeat where no step time would end
+// the game. An explicit LeaveRoom still resigns.
 
 // Game error codes, sent as a rejected GameUpdate's reason or an Error packet's data.
 const (
@@ -78,19 +81,22 @@ type ClockView struct {
 	StepMs int64 `json:"stepMs"`
 }
 
-// ClocksData is every side's clock at the time of a packet (sides in turn order) and the side to
-// move (index into sides: 0 is Player1).
+// ClocksData is every side's clock at the time of a packet (sides in turn order), the side to
+// move (index into sides: 0 is Player1) and which sides are away (disconnected, seat kept; same
+// order as sides).
 type ClocksData struct {
 	Sides  []ClockView `json:"sides"`
 	ToMove int         `json:"toMove"`
+	Away   []bool      `json:"away"`
 }
 
 // clocksAt is g's clocks at now as sent (its lock held).
 func (g *game) clocksAt(now time.Time) *ClocksData {
 	snap := g.clocks.snapshot(now)
-	out := &ClocksData{Sides: make([]ClockView, len(snap)), ToMove: g.clocks.toMove}
+	out := &ClocksData{Sides: make([]ClockView, len(snap)), ToMove: g.clocks.toMove, Away: make([]bool, len(snap))}
 	for i, c := range snap {
 		out.Sides[i] = ClockView{UsedMs: c.used.Milliseconds(), StepMs: c.step.Milliseconds()}
+		out.Away[i] = !g.clocks.away[i].IsZero()
 	}
 	return out
 }
@@ -302,6 +308,10 @@ func (s *Server) startGame(r *Room) {
 	defer g.mu.Unlock()
 	s.rooms.SetGame(r, g)
 	s.armDeadline(g, now)
+	// From now on the players must keep sending (Heartbeat every InGameHeartbeatInterval).
+	for _, p := range ordered {
+		p.conn.SetInGame(true)
+	}
 
 	views := make([]SeatView, len(ordered))
 	for i, p := range ordered {
@@ -334,12 +344,32 @@ func (s *Server) syncTimers(g *game) {
 			g.mu.Unlock()
 			return
 		}
-		data, _ := json.Marshal(g.clocksAt(time.Now()))
-		for _, p := range g.players {
-			p.conn.SendPacket(CreatePacket(PacketTypeTimerSync, "Server", g.room.Id, string(data), ""))
-		}
+		s.sendTimerSync(g, time.Now())
 		g.mu.Unlock()
 	}
+}
+
+// sendTimerSync sends g's players its clocks at now (lock held).
+func (s *Server) sendTimerSync(g *game, now time.Time) {
+	data, _ := json.Marshal(g.clocksAt(now))
+	for _, p := range g.players {
+		p.conn.SendPacket(CreatePacket(PacketTypeTimerSync, "Server", g.room.Id, string(data), ""))
+	}
+}
+
+// setAway marks c's side of g as away (its connection ended; lock held, game not over): the seat
+// is kept, the clocks keep running, the deadline is re-armed for the away side's loss and every
+// player is sent the clocks (TimerSync with away set). False when c does not play in g.
+func (s *Server) setAway(g *game, c *Client, now time.Time) bool {
+	side := g.sideOf(c)
+	if side == 0 {
+		return false
+	}
+	g.clocks.setAway(side-1, now)
+	s.armDeadline(g, now)
+	s.sendTimerSync(g, now)
+	logger.Infof("Game %s: player %d is away", g.id, side)
+	return true
 }
 
 // handleGameAction checks and applies a player's action in its room's game.
@@ -421,13 +451,15 @@ func (s *Server) reject(c *Client, seq int, reason string) {
 }
 
 // endGame ends g (its lock held): EndGame to the players, the record written, the room back to
-// waiting (everyone's ready cleared). winner is a player number, 0 for a draw.
+// waiting (everyone's ready cleared) and the away players (connection gone) out of it. winner is a
+// player number, 0 for a draw.
 func (s *Server) endGame(g *game, winner int, reason string) {
 	g.over = true
 	close(g.done)
 	g.stopDeadline()
 	data, _ := json.Marshal(EndGameData{Winner: winner, Reason: reason})
 	for _, p := range g.players {
+		p.conn.SetInGame(false)
 		p.conn.SendPacket(CreatePacket(PacketTypeEndGame, "Server", g.room.Id, string(data), ""))
 	}
 
@@ -451,6 +483,15 @@ func (s *Server) endGame(g *game, winner int, reason string) {
 		logger.Errorf("Game %s could not be saved: %v", g.id, err)
 	}
 	s.rooms.EndGame(g.room)
+	// An away player's seat holds a dead connection: it leaves now (the next player becomes the
+	// host if it was; the room goes when empty).
+	for i, p := range g.players {
+		if !g.clocks.away[i].IsZero() {
+			if r, _ := s.rooms.Leave(p.conn); r != nil {
+				p.conn.SetRoom("")
+			}
+		}
+	}
 	s.sendRoomState(g.room)
 	logger.Infof("Game %s ended: winner %d (%s)", g.id, winner, reason)
 }

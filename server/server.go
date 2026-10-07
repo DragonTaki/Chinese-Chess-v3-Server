@@ -3,8 +3,8 @@
 // Do not distribute or modify
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
-// Update Date: 2026/10/06
-// Version: v1.2
+// Update Date: 2026/10/07
+// Version: v1.3
 /* ----- ----- ----- ----- */
 
 package server
@@ -70,8 +70,8 @@ func (s *Server) RemoveClient(c *Client) {
 	_, present := s.clients[c]
 	delete(s.clients, c)
 	s.mu.Unlock()
-	// A disconnect leaves the room (a game in progress is handled with the games).
-	s.leaveRoom(c, false)
+	// A disconnect leaves the room, except from a running game: the seat is kept (away).
+	s.disconnect(c)
 	// A client the heartbeat already dropped for timing out was logged there.
 	if present {
 		logger.Warnf("Client disconnected: %s", c.RemoteAddr)

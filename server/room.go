@@ -530,9 +530,25 @@ func (s *Server) handleRoomPacket(c *Client, pkt *Packet) bool {
 	return true
 }
 
+// disconnect handles c's connection ending: a player of a running game keeps its seat and is away
+// (setAway); anyone else leaves the room as with LeaveRoom, silently.
+func (s *Server) disconnect(c *Client) {
+	if g := s.rooms.GameOf(c); g != nil {
+		g.mu.Lock()
+		now := time.Now()
+		// A clock already run out ends the game by it first (the room is then waiting).
+		kept := !g.over && !s.endIfExpired(g, now) && s.setAway(g, c, now)
+		g.mu.Unlock()
+		if kept {
+			return
+		}
+	}
+	s.leaveRoom(c, false)
+}
+
 // leaveRoom takes c out of its room and tells the others; reportNotInRoom answers a LeaveRoom
-// sent outside any room (a disconnect says nothing). Leaving during a game resigns it first (for
-// now a disconnect too: keeping the seat while the clock runs comes later).
+// sent outside any room (a disconnect says nothing). Leaving during a game (an explicit LeaveRoom:
+// a disconnect keeps the seat, see disconnect) resigns it first.
 func (s *Server) leaveRoom(c *Client, reportNotInRoom bool) {
 	if g := s.rooms.GameOf(c); g != nil {
 		g.mu.Lock()

@@ -3,14 +3,15 @@
 // Do not distribute or modify
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
-// Update Date: 2026/10/06
-// Version: v1.2
+// Update Date: 2026/10/07
+// Version: v1.3
 /* ----- ----- ----- ----- */
 
 package server
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -21,8 +22,8 @@ import (
 )
 
 // Client represents a connected client. LastSeenAt, IsAuthenticated, SenderId, Token and RoomId
-// are written by the client's own goroutine and read by the heartbeat goroutines: access them
-// through the methods below, which hold mu.
+// are written by the client's own goroutine and read by the heartbeat goroutines, inGame by the
+// game's: access them through the methods below, which hold mu.
 type Client struct {
 	Connection      net.Conn
 	RemoteAddr      string
@@ -33,6 +34,10 @@ type Client struct {
 	DisplayName     string // The account's name (Username, else Email), set when authenticated
 	Token           string
 	RoomId          string
+
+	// inGame is whether the client plays a running game: its read deadline is then
+	// InGameTimeoutLimit instead of ClientTimeoutLimit.
+	inGame bool
 
 	mu     sync.Mutex
 	sendMu sync.Mutex // one packet at a time on the connection (room updates come from other goroutines)
@@ -87,6 +92,35 @@ func (c *Client) HeartbeatInfo() (roomId, token string) {
 	return c.RoomId, c.Token
 }
 
+// readTimeout is how long a client may stay silent before it is dropped: InGameTimeoutLimit while
+// it plays a running game, ClientTimeoutLimit otherwise.
+func readTimeout(inGame bool) time.Duration {
+	if inGame {
+		return InGameTimeoutLimit
+	}
+	return ClientTimeoutLimit
+}
+
+// refreshReadDeadline sets the connection's read deadline to now plus the client's readTimeout.
+// Under mu, so it never undoes a SetInGame running meanwhile (whichever runs last uses the
+// current inGame).
+func (c *Client) refreshReadDeadline() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.Connection != nil {
+		c.Connection.SetReadDeadline(time.Now().Add(readTimeout(c.inGame)))
+	}
+}
+
+// SetInGame records whether the client plays a running game and applies the matching read
+// deadline at once (also to a read already waiting). Harmless on a closed connection.
+func (c *Client) SetInGame(inGame bool) {
+	c.mu.Lock()
+	c.inGame = inGame
+	c.mu.Unlock()
+	c.refreshReadDeadline()
+}
+
 // NewClient wraps a new connection of srv.
 func NewClient(conn net.Conn, srv *Server) *Client {
 	return &Client{
@@ -119,7 +153,13 @@ func (c *Client) Listen() {
 	welcomePkt := CreatePacket(PacketTypeServer, "Server", "", "Welcome to Go-Chess-Server! Type message to chat.", "")
 	c.SendPacket(welcomePkt)
 
-	for scanner.Scan() {
+	// Each line must arrive within the client's readTimeout (Heartbeat packets keep a quiet client
+	// alive); a read past the deadline ends the loop and so the connection.
+	for {
+		c.refreshReadDeadline()
+		if !scanner.Scan() {
+			break
+		}
 		line := scanner.Text()
 		c.Touch()
 
@@ -157,13 +197,18 @@ func (c *Client) Listen() {
 		}
 	}
 
-	// The loop ends on EOF (no error), on a closed connection, or on a line over MaxPacketSize.
-	if err := scanner.Err(); err != nil {
+	// The loop ends on EOF (no error), on a closed connection, on the read deadline or on a line
+	// over MaxPacketSize.
+	var netErr net.Error
+	if err := scanner.Err(); errors.As(err, &netErr) && netErr.Timeout() {
+		logger.Warnf("Client silent too long: %s", c.RemoteAddr)
+	} else if err != nil {
 		logger.Warnf("Read error from %s: %v", c.RemoteAddr, err)
 	}
 }
 
-// SendPacket sends a Packet to the client as JSON (one line); safe from any goroutine.
+// SendPacket sends a Packet to the client as JSON (one line); safe from any goroutine. On a closed
+// connection (an away player's seat still points at it) the write just fails and is ignored.
 func (c *Client) SendPacket(pkt *Packet) {
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
