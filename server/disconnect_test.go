@@ -39,6 +39,7 @@ func TestSetInGameShortensWaitingRead(t *testing.T) {
 	defer server.Close()
 	defer peer.Close()
 	c := NewClient(server, nil)
+	defer c.Close()
 	c.refreshReadDeadline()
 	errc := make(chan error, 1)
 	start := time.Now()
@@ -163,6 +164,7 @@ func TestDisconnectKeepsSeat(t *testing.T) {
 	if s.rooms.GameOf(a) != g || s.rooms.GameOf(b) != g {
 		t.Fatal("seat not kept")
 	}
+	flush(t, b, cb)
 	syncs := cb.packets(PacketTypeTimerSync)
 	if len(syncs) != 1 {
 		t.Fatalf("%d TimerSync", len(syncs))
@@ -215,6 +217,7 @@ func TestGameEndRemovesAwayPlayer(t *testing.T) {
 	if b.inGame {
 		t.Fatal("remaining player still in game")
 	}
+	flush(t, b, cb)
 	ends := cb.packets(PacketTypeEndGame)
 	if len(ends) != 1 || !strings.Contains(ends[0].Data, ClockReasonDisconnect) {
 		t.Fatalf("EndGame %v", ends)
@@ -232,8 +235,9 @@ func TestLeaveDuringGameResigns(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := NewServer(dbConn, nil)
-	g, a, _, _, cb := runningGame(t, s, TimerSettings{Mode: "CountUp", TotalMinutes: 10, StepSeconds: 60})
+	g, a, b, _, cb := runningGame(t, s, TimerSettings{Mode: "CountUp", TotalMinutes: 10, StepSeconds: 60})
 	s.leaveRoom(a, true)
+	flush(t, b, cb)
 	ends := cb.packets(PacketTypeEndGame)
 	if len(ends) != 1 || !strings.Contains(ends[0].Data, `"Resign"`) || !g.over {
 		t.Fatalf("EndGame %v", ends)

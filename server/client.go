@@ -4,7 +4,7 @@
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
 // Update Date: 2026/10/07
-// Version: v1.3
+// Version: v1.4
 /* ----- ----- ----- ----- */
 
 package server
@@ -24,6 +24,10 @@ import (
 // Client represents a connected client. LastSeenAt, IsAuthenticated, SenderId, Token and RoomId
 // are written by the client's own goroutine and read by the heartbeat goroutines, inGame by the
 // game's: access them through the methods below, which hold mu.
+//
+// Outgoing packets go through a bounded queue drained by the client's writer goroutine (writeLoop),
+// so a sender (often holding a game's lock) never waits on the network. Make clients with
+// NewClient, which starts the writer.
 type Client struct {
 	Connection      net.Conn
 	RemoteAddr      string
@@ -39,8 +43,14 @@ type Client struct {
 	// InGameTimeoutLimit instead of ClientTimeoutLimit.
 	inGame bool
 
-	mu     sync.Mutex
-	sendMu sync.Mutex // one packet at a time on the connection (room updates come from other goroutines)
+	mu sync.Mutex
+
+	queue     chan []byte   // packet lines waiting for writeLoop, in send order (SendQueueSize)
+	done      chan struct{} // closed by Close: nothing more is sent, writeLoop ends
+	closing   chan struct{} // closed by Finish: writeLoop writes what is queued, then Close
+	stopped   chan struct{} // closed when writeLoop has ended
+	closeOnce sync.Once
+	finOnce   sync.Once
 
 	// When the token's last-seen time was last written (only the client's own goroutine uses it).
 	tokenSeenWrittenAt time.Time
@@ -121,21 +131,28 @@ func (c *Client) SetInGame(inGame bool) {
 	c.refreshReadDeadline()
 }
 
-// NewClient wraps a new connection of srv.
+// NewClient wraps a new connection of srv and starts its writer goroutine (it ends on Close).
 func NewClient(conn net.Conn, srv *Server) *Client {
-	return &Client{
+	c := &Client{
 		Connection: conn,
 		RemoteAddr: conn.RemoteAddr().String(),
 		Server:     srv,
+		queue:      make(chan []byte, SendQueueSize),
+		done:       make(chan struct{}),
+		closing:    make(chan struct{}),
+		stopped:    make(chan struct{}),
 	}
+	go c.writeLoop()
+	return c
 }
 
 // Listen serves the connection: the handshake, a welcome message, then one JSON packet per line
 // until the connection ends or the client sends "/quit". Only chat packets are handled so far
 // (broadcast to the other clients); the room / game packet types are not implemented.
 func (c *Client) Listen() {
+	// The reply already queued (an auth failure's reason, say) still goes out before the close.
 	defer func() {
-		c.Connection.Close()
+		c.Finish()
 		c.Server.RemoveClient(c)
 	}()
 
@@ -207,12 +224,97 @@ func (c *Client) Listen() {
 	}
 }
 
-// SendPacket sends a Packet to the client as JSON (one line); safe from any goroutine. On a closed
-// connection (an away player's seat still points at it) the write just fails and is ignored.
+// SendPacket queues a Packet for the client as JSON (one line); safe from any goroutine and never
+// blocks. Packets reach the connection in the order queued. A client whose queue is full (it does
+// not read, or its link is too slow) is closed and the packet dropped; so is every packet after
+// Close or Finish (an away player's seat still points at a closed client).
 func (c *Client) SendPacket(pkt *Packet) {
-	c.sendMu.Lock()
-	defer c.sendMu.Unlock()
-	fmt.Fprintln(c.Connection, pkt.SerializePacket())
+	select {
+	case <-c.done:
+		return
+	case <-c.closing:
+		return
+	default:
+	}
+	line := append([]byte(pkt.SerializePacket()), '\n')
+	select {
+	case c.queue <- line:
+	default:
+		logger.Warnf("Send queue full, closing %s", c.RemoteAddr)
+		c.Close()
+	}
+}
+
+// Close ends the client at once: queued packets are dropped, the writer goroutine ends and the
+// connection is closed (so its read loop ends too and the client goes through RemoveClient).
+// Idempotent; never blocks (a TLS close may wait to send its close alert, so it runs on its own).
+func (c *Client) Close() {
+	c.closeOnce.Do(func() {
+		close(c.done)
+		go c.Connection.Close()
+	})
+}
+
+// Finish ends the client once its queued packets are written (each within WriteTimeout): for the
+// end of the read loop, so a last reply still goes out. Nothing sent after it is queued.
+func (c *Client) Finish() {
+	c.finOnce.Do(func() { close(c.closing) })
+}
+
+// Closed reports whether the client was closed or finished (its connection is gone or going).
+func (c *Client) Closed() bool {
+	select {
+	case <-c.done:
+		return true
+	case <-c.closing:
+		return true
+	default:
+		return false
+	}
+}
+
+// writeLoop writes the queued packet lines to the connection in order, each within WriteTimeout;
+// a failed or timed-out write closes the client. It ends on Close, or on Finish once the queue is
+// empty.
+func (c *Client) writeLoop() {
+	defer close(c.stopped)
+	for {
+		select {
+		case <-c.done:
+			return
+		case line := <-c.queue:
+			if !c.write(line) {
+				return
+			}
+		case <-c.closing:
+			for {
+				select {
+				case line := <-c.queue:
+					if !c.write(line) {
+						return
+					}
+				default:
+					c.Close()
+					return
+				}
+			}
+		}
+	}
+}
+
+// write writes one line within WriteTimeout; on an error it closes the client and returns false.
+func (c *Client) write(line []byte) bool {
+	c.Connection.SetWriteDeadline(time.Now().Add(WriteTimeout))
+	if _, err := c.Connection.Write(line); err != nil {
+		select {
+		case <-c.done: // closed meanwhile: the error is the close's
+		default:
+			logger.Warnf("Write to %s failed: %v", c.RemoteAddr, err)
+		}
+		c.Close()
+		return false
+	}
+	return true
 }
 
 // Name is the account's display name.

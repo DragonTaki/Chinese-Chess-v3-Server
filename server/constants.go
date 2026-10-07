@@ -4,7 +4,7 @@
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
 // Update Date: 2026/10/07
-// Version: v1.3
+// Version: v1.4
 /* ----- ----- ----- ----- */
 
 package server
@@ -66,3 +66,12 @@ const DisconnectGraceSeat = 15 * time.Second
 // TimerSyncInterval is how often a running game sends every player its clocks (TimerSync), so a
 // client's display stays near the server's between moves.
 const TimerSyncInterval = 3 * time.Second
+
+// Outgoing packets: each client has a queue of SendQueueSize packets drained by its own writer;
+// a client whose queue fills up (it stops reading, or its link is too slow) is closed, and so is
+// one a single packet write to which takes longer than WriteTimeout. A sender never waits on a
+// client's connection.
+const (
+	SendQueueSize = 256
+	WriteTimeout  = 5 * time.Second
+)

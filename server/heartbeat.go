@@ -3,8 +3,8 @@
 // Do not distribute or modify
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
-// Update Date: 2026/10/05
-// Version: v1.1
+// Update Date: 2026/10/07
+// Version: v1.2
 /* ----- ----- ----- ----- */
 
 package server
@@ -44,7 +44,7 @@ func (s *Server) CheckClientHeartbeat(timeoutLimit time.Duration) {
 		// Closed outside the lock; each client's Listen then ends.
 		for _, c := range timedOut {
 			logger.Warnf("Client timed out: %s", c.RemoteAddr)
-			c.Connection.Close()
+			c.Close()
 		}
 	}
 }
