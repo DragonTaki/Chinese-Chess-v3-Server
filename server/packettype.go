@@ -31,6 +31,7 @@ const (
 	PacketTypeStartGame  PacketType = "StartGame"
 	PacketTypeEndGame    PacketType = "EndGame"
 	PacketTypeGameAction PacketType = "GameAction"
+	PacketTypeGameUpdate PacketType = "GameUpdate"
 	PacketTypeTimerSync  PacketType = "TimerSync"
 
 	// Chat

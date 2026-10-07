@@ -145,11 +145,13 @@ func (c *Client) Listen() {
 		case PacketTypeHeartbeat:
 			// A sign of life (already recorded above); also kept on the session token, throttled.
 			c.recordTokenSeen()
+		case PacketTypeGameAction:
+			c.Server.handleGameAction(c, pkt)
 		default:
 			if c.Server.handleRoomPacket(c, pkt) {
 				continue
 			}
-			// Games are not implemented yet; anything else is not a client packet.
+			// Anything else is not a client packet.
 			errPkt := CreatePacket(PacketTypeError, "Server", "", fmt.Sprintf("Unsupported packet type: %s", pkt.Type), "")
 			c.SendPacket(errPkt)
 		}

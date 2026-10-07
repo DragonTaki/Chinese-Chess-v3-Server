@@ -30,12 +30,17 @@ type Token struct {
 	LastSeen  time.Time
 }
 
-// Game is a played game (not used yet: games are not implemented).
+// Game is a played online game, written by the server when it ends (the record that counts: the
+// client's own copies are not trusted).
 type Game struct {
-	ID          string `gorm:"primaryKey"`
-	PlayerRed   string
-	PlayerBlack string
-	Winner      *string
-	StartedAt   time.Time
-	EndedAt     *time.Time
+	ID        string `gorm:"primaryKey"`
+	Kind      string // GameKind name (Traditional ...)
+	Mode      string // Online mode (Custom ...)
+	Rules     string // The game's rule switches and clocks, JSON
+	Players   string // The players' user ids in turn order (Player1 first), JSON array
+	Winner    string // The winner's user id; "" for a draw
+	Reason    string // GameOverReason name
+	Moves     string // The moves in order, JSON array of {from, to, notation}
+	StartedAt time.Time
+	EndedAt   time.Time
 }

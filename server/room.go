@@ -137,6 +137,7 @@ type Room struct {
 	Host     *Client
 	State    string
 	seats    []seat
+	game     *game // the game in progress; nil while waiting
 }
 
 // SeatView is one seat as the clients see it.
@@ -301,6 +302,74 @@ func (m *RoomManager) SetReady(c *Client, ready bool) (*Room, bool, string) {
 	return r, all, ""
 }
 
+// Members is everyone seated in r.
+func (m *RoomManager) Members(r *Room) []*Client {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return r.members()
+}
+
+// HostOf is r's host.
+func (m *RoomManager) HostOf(r *Room) *Client {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return r.Host
+}
+
+// BeginGame marks r playing when every seat is taken and ready; it returns the players in seat
+// order and false when the room cannot start (someone left or unreadied meanwhile, or it already started).
+func (m *RoomManager) BeginGame(r *Room) ([]*Client, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if r.State != RoomWaiting {
+		return nil, false
+	}
+	for _, s := range r.seats {
+		if s.client == nil || !s.ready {
+			return nil, false
+		}
+	}
+	r.State = RoomPlaying
+	return r.members(), true
+}
+
+// SetGame records r's game in progress.
+func (m *RoomManager) SetGame(r *Room, g *game) {
+	m.mu.Lock()
+	r.game = g
+	m.mu.Unlock()
+}
+
+// GameOf is the game in progress in c's room; nil when there is none.
+func (m *RoomManager) GameOf(c *Client) *game {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if r, ok := m.byUser[c]; ok {
+		return r.game
+	}
+	return nil
+}
+
+// EndGame puts r back to waiting: no game, everyone's ready cleared.
+func (m *RoomManager) EndGame(r *Room) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r.State = RoomWaiting
+	r.game = nil
+	for i := range r.seats {
+		r.seats[i].ready = false
+	}
+}
+
+// NewGameId returns a new game id (16 random hex digits from crypto/rand).
+func (m *RoomManager) NewGameId() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+	return fmt.Sprintf("%x", b)
+}
+
 // View is the room's current state for the clients (taken under the lock).
 func (m *RoomManager) View(r *Room) (RoomView, []*Client) {
 	m.mu.Lock()
@@ -387,13 +456,15 @@ func (s *Server) handleRoomPacket(c *Client, pkt *Packet) bool {
 			sendRoomError(c, RoomErrInvalidData, err.Error())
 			return true
 		}
-		r, _, code := s.rooms.SetReady(c, req.Ready)
+		r, all, code := s.rooms.SetReady(c, req.Ready)
 		if code != "" {
 			sendRoomError(c, code, "")
 			return true
 		}
-		// Starting the game once every seat is ready comes with the games themselves.
 		s.sendRoomState(r)
+		if all {
+			s.startGame(r)
+		}
 	default:
 		return false
 	}
@@ -401,8 +472,18 @@ func (s *Server) handleRoomPacket(c *Client, pkt *Packet) bool {
 }
 
 // leaveRoom takes c out of its room and tells the others; reportNotInRoom answers a LeaveRoom
-// sent outside any room (a disconnect says nothing).
+// sent outside any room (a disconnect says nothing). Leaving during a game resigns it first (for
+// now a disconnect too: keeping the seat while the clock runs comes with the clocks).
 func (s *Server) leaveRoom(c *Client, reportNotInRoom bool) {
+	if g := s.rooms.GameOf(c); g != nil {
+		g.mu.Lock()
+		if !g.over {
+			if side := g.sideOf(c); side > 0 {
+				s.endGame(g, 3-side, "Resign")
+			}
+		}
+		g.mu.Unlock()
+	}
 	r, rest := s.rooms.Leave(c)
 	if r == nil {
 		if reportNotInRoom {

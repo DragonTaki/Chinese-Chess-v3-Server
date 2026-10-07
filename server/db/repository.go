@@ -84,3 +84,8 @@ func UserName(db *gorm.DB, uid string) string {
 	}
 	return user.Email
 }
+
+// SaveGame writes a finished game.
+func SaveGame(db *gorm.DB, game *Game) error {
+	return db.Create(game).Error
+}
