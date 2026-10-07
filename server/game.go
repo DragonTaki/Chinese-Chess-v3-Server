@@ -60,8 +60,9 @@ type game struct {
 	startedAt time.Time
 	over      bool
 	clocks    clockState
-	deadline  *time.Timer // fires at the clocks' next expiry; nil when none is armed
-	gen       uint64      // bumped on every re-arm and at the end: a stale deadline callback does nothing
+	deadline  *time.Timer   // fires at the clocks' next expiry; nil when none is armed
+	gen       uint64        // bumped on every re-arm and at the end: a stale deadline callback does nothing
+	done      chan struct{} // closed by endGame (once): stops the game's TimerSync goroutine
 }
 
 // ClockView is one side's clock as sent: the total time used and the current move's time (ms).
@@ -270,7 +271,7 @@ func (s *Server) startGame(r *Room) {
 	g := &game{
 		id: s.rooms.NewGameId(), room: r, kind: r.Settings.Kind, rules: r.Settings.Rules,
 		players: ordered, position: standardPosition(), startedAt: now,
-		clocks: newClockState(timer, len(ordered), now),
+		clocks: newClockState(timer, len(ordered), now), done: make(chan struct{}),
 	}
 	// Held until the StartGame packets are out, so no action or deadline overtakes them.
 	g.mu.Lock()
@@ -290,7 +291,31 @@ func (s *Server) startGame(r *Room) {
 		p.SendPacket(CreatePacket(PacketTypeStartGame, "Server", r.Id, string(data), ""))
 	}
 	s.sendRoomState(r)
+	go s.syncTimers(g)
 	logger.Infof("Game %s started in room %s", g.id, r.Id)
+}
+
+// syncTimers sends g's players their clocks (TimerSync) every TimerSyncInterval until the game ends.
+func (s *Server) syncTimers(g *game) {
+	ticker := time.NewTicker(TimerSyncInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-g.done:
+			return
+		case <-ticker.C:
+		}
+		g.mu.Lock()
+		if g.over {
+			g.mu.Unlock()
+			return
+		}
+		data, _ := json.Marshal(g.clocksAt(time.Now()))
+		for _, p := range g.players {
+			p.SendPacket(CreatePacket(PacketTypeTimerSync, "Server", g.room.Id, string(data), ""))
+		}
+		g.mu.Unlock()
+	}
 }
 
 // handleGameAction checks and applies a player's action in its room's game.
@@ -375,6 +400,7 @@ func (s *Server) reject(c *Client, seq int, reason string) {
 // waiting (everyone's ready cleared). winner is a player number, 0 for a draw.
 func (s *Server) endGame(g *game, winner int, reason string) {
 	g.over = true
+	close(g.done)
 	g.stopDeadline()
 	data, _ := json.Marshal(EndGameData{Winner: winner, Reason: reason})
 	for _, p := range g.players {

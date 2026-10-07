@@ -53,3 +53,7 @@ const (
 // DisconnectGraceSeat is how long an away side keeps its seat (count-up clocks, or count-down
 // without the step timer) before it loses by ClockReasonDisconnect.
 const DisconnectGraceSeat = 15 * time.Second
+
+// TimerSyncInterval is how often a running game sends every player its clocks (TimerSync), so a
+// client's display stays near the server's between moves.
+const TimerSyncInterval = 3 * time.Second
