@@ -16,6 +16,7 @@ import (
 	"math/big"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Online play (ONLINE-PLAY.md in the record repo): a player picks the game kind, then the mode.
@@ -473,11 +474,12 @@ func (s *Server) handleRoomPacket(c *Client, pkt *Packet) bool {
 
 // leaveRoom takes c out of its room and tells the others; reportNotInRoom answers a LeaveRoom
 // sent outside any room (a disconnect says nothing). Leaving during a game resigns it first (for
-// now a disconnect too: keeping the seat while the clock runs comes with the clocks).
+// now a disconnect too: keeping the seat while the clock runs comes later).
 func (s *Server) leaveRoom(c *Client, reportNotInRoom bool) {
 	if g := s.rooms.GameOf(c); g != nil {
 		g.mu.Lock()
-		if !g.over {
+		// A clock already run out ends the game by it, not by the resign.
+		if !g.over && !s.endIfExpired(g, time.Now()) {
 			if side := g.sideOf(c); side > 0 {
 				s.endGame(g, 3-side, "Resign")
 			}

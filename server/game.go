@@ -24,7 +24,9 @@ import (
 
 // An online game is server-authoritative (ANTI-CHEAT.md): the server keeps the position, checks
 // every action with the rules host, decides the end and records the game; a client only sends what
-// it wants to do. Traditional (Full board) only so far; clocks come with the next step.
+// it wants to do. Traditional (Full board) only so far. The clocks are the server's too: a move is
+// timed from when its packet is received, and the game ends by TimeUp when the mover's time runs
+// out (a deadline timer per game).
 
 // Game error codes, sent as a rejected GameUpdate's reason or an Error packet's data.
 const (
@@ -57,6 +59,87 @@ type game struct {
 	moves     []moveEntry
 	startedAt time.Time
 	over      bool
+	clocks    clockState
+	deadline  *time.Timer // fires at the clocks' next expiry; nil when none is armed
+	gen       uint64      // bumped on every re-arm and at the end: a stale deadline callback does nothing
+}
+
+// ClockView is one side's clock as sent: the total time used and the current move's time (ms).
+type ClockView struct {
+	UsedMs int64 `json:"usedMs"`
+	StepMs int64 `json:"stepMs"`
+}
+
+// ClocksData is every side's clock at the time of a packet (sides in turn order) and the side to
+// move (index into sides: 0 is Player1).
+type ClocksData struct {
+	Sides  []ClockView `json:"sides"`
+	ToMove int         `json:"toMove"`
+}
+
+// clocksAt is g's clocks at now as sent (its lock held).
+func (g *game) clocksAt(now time.Time) *ClocksData {
+	snap := g.clocks.snapshot(now)
+	out := &ClocksData{Sides: make([]ClockView, len(snap)), ToMove: g.clocks.toMove}
+	for i, c := range snap {
+		out.Sides[i] = ClockView{UsedMs: c.used.Milliseconds(), StepMs: c.step.Milliseconds()}
+	}
+	return out
+}
+
+// otherSide is the winner (player number) when side index loses: the other player of a two-player
+// game; 0 (no single winner) otherwise.
+func (g *game) otherSide(side int) int {
+	if len(g.players) == 2 {
+		return 2 - side
+	}
+	return 0
+}
+
+// stopDeadline stops g's deadline timer and makes any callback already waiting a no-op (lock held).
+func (g *game) stopDeadline() {
+	g.gen++
+	if g.deadline != nil {
+		g.deadline.Stop()
+		g.deadline = nil
+	}
+}
+
+// armDeadline (re)arms g's deadline timer at the clocks' next expiry as of now (lock held); none
+// when nothing can end the game by the clocks.
+func (s *Server) armDeadline(g *game, now time.Time) {
+	g.stopDeadline()
+	_, _, at, ok := g.clocks.expiry(now)
+	if !ok {
+		return
+	}
+	gen := g.gen
+	g.deadline = time.AfterFunc(at.Sub(now), func() { s.onDeadline(g, gen) })
+}
+
+// onDeadline is g's deadline timer firing: the game ends if its clocks have run out, otherwise the
+// timer is re-armed (it fired early or the clocks changed).
+func (s *Server) onDeadline(g *game, gen uint64) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.over || g.gen != gen {
+		return
+	}
+	now := time.Now()
+	if !s.endIfExpired(g, now) {
+		s.armDeadline(g, now)
+	}
+}
+
+// endIfExpired ends g when its clocks have run out by now (lock held, game not over); it reports
+// whether it did.
+func (s *Server) endIfExpired(g *game, now time.Time) bool {
+	side, reason, ok := g.clocks.expired(now)
+	if !ok {
+		return false
+	}
+	s.endGame(g, g.otherSide(side), reason)
+	return true
 }
 
 // sideOf is c's player number (1, 2); 0 when c does not play in g.
@@ -110,6 +193,7 @@ type StartGameData struct {
 	Players  []SeatView      `json:"players"` // in turn order
 	YourSide int             `json:"yourSide"`
 	Position rules.Position  `json:"position"`
+	Clocks   *ClocksData     `json:"clocks"`
 }
 
 // GameUpdateData is a validated action as every player sees it, or (Rejected set) an action of the
@@ -122,6 +206,7 @@ type GameUpdateData struct {
 	Record   *rules.Record   `json:"record,omitempty"`
 	Position *rules.Position `json:"position,omitempty"`
 	Check    bool            `json:"check,omitempty"`
+	Clocks   *ClocksData     `json:"clocks,omitempty"`
 }
 
 // EndGameData is how the game ended: the winner (player number; 0 for a draw) and why.
@@ -175,11 +260,23 @@ func (s *Server) startGame(r *Room) {
 		}
 	}
 
+	// Every room has clocks (validate requires a timer mode); a room without one would only measure
+	// (count up) rather than count down from zero limits.
+	timer := r.Settings.Timer
+	if timer.Mode == "" {
+		timer.Mode = "CountUp"
+	}
+	now := time.Now()
 	g := &game{
 		id: s.rooms.NewGameId(), room: r, kind: r.Settings.Kind, rules: r.Settings.Rules,
-		players: ordered, position: standardPosition(), startedAt: time.Now(),
+		players: ordered, position: standardPosition(), startedAt: now,
+		clocks: newClockState(timer, len(ordered), now),
 	}
+	// Held until the StartGame packets are out, so no action or deadline overtakes them.
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	s.rooms.SetGame(r, g)
+	s.armDeadline(g, now)
 
 	views := make([]SeatView, len(ordered))
 	for i, p := range ordered {
@@ -188,7 +285,7 @@ func (s *Server) startGame(r *Room) {
 	for i, p := range ordered {
 		data, _ := json.Marshal(StartGameData{
 			GameId: g.id, Kind: g.kind, Rules: g.rules, Timer: r.Settings.Timer,
-			Players: views, YourSide: i + 1, Position: g.position,
+			Players: views, YourSide: i + 1, Position: g.position, Clocks: g.clocksAt(now),
 		})
 		p.SendPacket(CreatePacket(PacketTypeStartGame, "Server", r.Id, string(data), ""))
 	}
@@ -198,6 +295,8 @@ func (s *Server) startGame(r *Room) {
 
 // handleGameAction checks and applies a player's action in its room's game.
 func (s *Server) handleGameAction(c *Client, pkt *Packet) {
+	// The action is timed when received: the rules host's time is not the mover's.
+	now := time.Now()
 	var act GameActionData
 	if err := json.Unmarshal([]byte(pkt.Data), &act); err != nil {
 		sendRoomError(c, RoomErrInvalidData, err.Error())
@@ -210,7 +309,7 @@ func (s *Server) handleGameAction(c *Client, pkt *Packet) {
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.over {
+	if g.over || s.endIfExpired(g, now) {
 		s.reject(c, act.Seq, GameErrNoGame)
 		return
 	}
@@ -249,7 +348,11 @@ func (s *Server) handleGameAction(c *Client, pkt *Packet) {
 			g.history.PliesSinceCapture++
 			g.history.RecentMoves = append(g.history.RecentMoves, move)
 		}
-		update := GameUpdateData{Seq: act.Seq, Ply: len(g.moves), Mover: side, Record: res.Record, Position: &g.position, Check: res.Check}
+		g.clocks.commitMove(now)
+		if res.GameOver == nil {
+			s.armDeadline(g, now)
+		}
+		update := GameUpdateData{Seq: act.Seq, Ply: len(g.moves), Mover: side, Record: res.Record, Position: &g.position, Check: res.Check, Clocks: g.clocksAt(now)}
 		data, _ := json.Marshal(update)
 		for _, p := range g.players {
 			p.SendPacket(CreatePacket(PacketTypeGameUpdate, "Server", g.room.Id, string(data), ""))
@@ -272,6 +375,7 @@ func (s *Server) reject(c *Client, seq int, reason string) {
 // waiting (everyone's ready cleared). winner is a player number, 0 for a draw.
 func (s *Server) endGame(g *game, winner int, reason string) {
 	g.over = true
+	g.stopDeadline()
 	data, _ := json.Marshal(EndGameData{Winner: winner, Reason: reason})
 	for _, p := range g.players {
 		p.SendPacket(CreatePacket(PacketTypeEndGame, "Server", g.room.Id, string(data), ""))
