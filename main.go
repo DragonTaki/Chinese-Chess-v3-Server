@@ -3,15 +3,15 @@
 // Do not distribute or modify
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
-// Update Date: 2026/10/06
-// Version: v1.2
+// Update Date: 2026/10/07
+// Version: v1.3
 /* ----- ----- ----- ----- */
 
 package main
 
 import (
+	"crypto/tls"
 	"fmt"
-	"net"
 	"os"
 
 	"Chinese-Chess-v3-Server/logger"
@@ -23,10 +23,25 @@ import (
 // DefaultListenAddr is the address served when CHESS_LISTEN_ADDR is not set (this machine only).
 const DefaultListenAddr = "127.0.0.1:8080"
 
-// main opens the database, starts the heartbeat system and serves TCP clients, one goroutine per
-// connection. Environment: JWT_SECRET (required, see server/jwt), CHESS_LISTEN_ADDR (default
-// DefaultListenAddr), CHESS_DB_PATH (default db.DefaultPath), CHESS_RULES_PATH (the built
-// rules host from the rules submodule; optional until games are implemented).
+// tlsConfig is the server's TLS setup (author 2026-10-07: every connection is TLS, no plain-text
+// fallback): the certificate and key files from CHESS_TLS_CERT / CHESS_TLS_KEY (PEM), TLS 1.3 only.
+func tlsConfig() (*tls.Config, error) {
+	certPath, keyPath := os.Getenv("CHESS_TLS_CERT"), os.Getenv("CHESS_TLS_KEY")
+	if certPath == "" || keyPath == "" {
+		return nil, fmt.Errorf("CHESS_TLS_CERT and CHESS_TLS_KEY must name the certificate and key files")
+	}
+	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		return nil, fmt.Errorf("loading the TLS certificate: %w", err)
+	}
+	return &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13}, nil
+}
+
+// main opens the database, starts the heartbeat system and serves TLS clients, one goroutine per
+// connection. Environment: JWT_SECRET (required, see server/jwt), CHESS_TLS_CERT and CHESS_TLS_KEY
+// (required: the PEM certificate and key), CHESS_LISTEN_ADDR (default DefaultListenAddr),
+// CHESS_DB_PATH (default db.DefaultPath), CHESS_RULES_PATH (the built rules host from the rules
+// submodule; optional until games are implemented).
 func main() {
 	fmt.Println("== Server Booting ==")
 
@@ -56,16 +71,21 @@ func main() {
 	// Launch heartbeat system
 	srv.StartHeartbeatSystem()
 
-	// Start TCP listener
+	// Start the TLS listener
+	tlsConf, err := tlsConfig()
+	if err != nil {
+		logger.Errorf("Failed to start server: %v", err)
+		os.Exit(1)
+	}
 	addr := envOr("CHESS_LISTEN_ADDR", DefaultListenAddr)
-	listener, err := net.Listen("tcp", addr)
+	listener, err := tls.Listen("tcp", addr, tlsConf)
 	if err != nil {
 		logger.Errorf("Failed to start server: %v", err)
 		os.Exit(1)
 	}
 	defer listener.Close()
 
-	logger.Infof("Chess server started at %s", addr)
+	logger.Infof("Chess server started at %s (TLS 1.3)", addr)
 
 	for {
 		conn, err := listener.Accept()
