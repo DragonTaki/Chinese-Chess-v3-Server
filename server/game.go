@@ -4,7 +4,7 @@
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2026/10/07
 // Update Date: 2026/10/07
-// Version: v1.0
+// Version: v1.1
 /* ----- ----- ----- ----- */
 
 package server
@@ -263,6 +263,13 @@ func (s *Server) startGame(r *Room) {
 	if !ok {
 		return
 	}
+	s.launchGame(r, players)
+}
+
+// launchGame sets up and starts the game of r, which BeginGame marked playing with players. A
+// player that left or disconnected since then makes the start fail (see RoomManager.SetGame): no
+// game, the others are sent the waiting room.
+func (s *Server) launchGame(r *Room, players []player) {
 	// Seat 0 is the host's seat when the host created the room; "Host" / "Guest" pick by the host.
 	host := s.rooms.HostOf(r)
 	first := players[0]
@@ -306,7 +313,11 @@ func (s *Server) startGame(r *Room) {
 	// Held until the StartGame packets are out, so no action or deadline overtakes them.
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	s.rooms.SetGame(r, g)
+	if !s.rooms.SetGame(r, g) {
+		s.sendRoomState(r)
+		logger.Infof("Game start in room %s failed: a player left", r.Id)
+		return
+	}
 	s.armDeadline(g, now)
 	// From now on the players must keep sending (Heartbeat every InGameHeartbeatInterval).
 	for _, p := range ordered {

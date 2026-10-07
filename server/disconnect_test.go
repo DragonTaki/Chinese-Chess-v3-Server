@@ -4,7 +4,7 @@
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2026/10/07
 // Update Date: 2026/10/07
-// Version: v1.0
+// Version: v1.1
 /* ----- ----- ----- ----- */
 
 package server
@@ -133,7 +133,9 @@ func runningGame(t *testing.T, s *Server, timer TimerSettings) (*game, *Client, 
 	g := &game{id: "g", room: r, kind: "Traditional", players: players, position: standardPosition(),
 		startedAt: now, clocks: newClockState(timer, len(players), now), done: make(chan struct{})}
 	g.mu.Lock()
-	s.rooms.SetGame(r, g)
+	if !s.rooms.SetGame(r, g) {
+		t.Fatal("game not set")
+	}
 	s.armDeadline(g, now)
 	for _, p := range players {
 		p.conn.SetInGame(true)
@@ -241,5 +243,121 @@ func TestLeaveDuringGameResigns(t *testing.T) {
 	ends := cb.packets(PacketTypeEndGame)
 	if len(ends) != 1 || !strings.Contains(ends[0].Data, `"Resign"`) || !g.over {
 		t.Fatalf("EndGame %v", ends)
+	}
+}
+
+// readyRoom seats a (host) and b in a ready room of s and begins its game (BeginGame), as
+// startGame does before launchGame.
+func readyRoom(t *testing.T, s *Server) (*Room, []player, *Client, *Client, *fakeConn, *fakeConn) {
+	t.Helper()
+	ca, cb := newFakeConn(), newFakeConn()
+	a, b := NewClient(ca, s), NewClient(cb, s)
+	a.MarkAuthenticated("a", "A", "")
+	b.MarkAuthenticated("b", "B", "")
+	r, _, _ := s.rooms.Create(a, testSettings())
+	s.rooms.Join(b, r.Id)
+	s.rooms.SetReady(a, true)
+	s.rooms.SetReady(b, true)
+	players, ok := s.rooms.BeginGame(r)
+	if !ok {
+		t.Fatal("game did not begin")
+	}
+	return r, players, a, b, ca, cb
+}
+
+// checkStartFailed checks that r's start failed for the remaining player a (ONLINE-PLAY 8.18): no
+// game, none recorded, no StartGame, a back in the waiting room (ready cleared, host) and not in game.
+func checkStartFailed(t *testing.T, s *Server, r *Room, a *Client, ca *fakeConn) {
+	t.Helper()
+	if s.rooms.GameOf(a) != nil {
+		t.Fatal("game set")
+	}
+	var n int64
+	s.dbConn.Model(&db.Game{}).Count(&n)
+	if n != 0 {
+		t.Fatalf("%d games recorded", n)
+	}
+	if a.inGame {
+		t.Fatal("remaining player in game")
+	}
+	view, members := s.rooms.View(r)
+	if view.State != RoomWaiting || len(members) != 1 || members[0] != a || view.HostId != "a" || view.Seats[0].Ready {
+		t.Fatalf("room %+v", view)
+	}
+	flush(t, a, ca)
+	if len(ca.packets(PacketTypeStartGame)) != 0 {
+		t.Fatal("StartGame sent")
+	}
+	states := ca.packets(PacketTypeRoomState)
+	var last RoomView
+	json.Unmarshal([]byte(states[len(states)-1].Data), &last)
+	if last.State != RoomWaiting || last.Seats[1] != nil {
+		t.Fatalf("last RoomState %+v", last)
+	}
+}
+
+func testServer(t *testing.T) *Server {
+	t.Helper()
+	dbConn, err := db.InitDB(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return NewServer(dbConn, nil)
+}
+
+// A player that disconnects after everyone is ready but before the game is set up makes the start
+// fail; it leaves the room.
+func TestDisconnectBeforeStartFails(t *testing.T) {
+	s := testServer(t)
+	r, players, a, b, ca, cb := readyRoom(t, s)
+	cb.Close()
+	b.Finish()
+	s.RemoveClient(b)
+	s.launchGame(r, players)
+	checkStartFailed(t, s, r, a, ca)
+}
+
+// The same when the connection is already gone but its disconnect is not handled yet: the start
+// fails, and the disconnect handled afterwards takes the player out of the waiting room.
+func TestClosedBeforeStartFails(t *testing.T) {
+	s := testServer(t)
+	r, players, a, b, ca, _ := readyRoom(t, s)
+	b.Close()
+	s.launchGame(r, players)
+	s.RemoveClient(b)
+	checkStartFailed(t, s, r, a, ca)
+}
+
+// A disconnect arriving once the game is set (startGame holds the game's lock) waits for the
+// StartGame packets and is then an in-game one: the player is away, the game goes on.
+func TestDisconnectDuringStartIsAway(t *testing.T) {
+	s := testServer(t)
+	r, players, a, b, ca, _ := readyRoom(t, s)
+	done := make(chan struct{})
+	go func() {
+		// Wait until the game is set, then disconnect b while launchGame may still hold its lock.
+		for s.rooms.GameOf(b) == nil {
+			time.Sleep(time.Microsecond)
+		}
+		b.Close()
+		s.RemoveClient(b)
+		close(done)
+	}()
+	s.launchGame(r, players)
+	<-done
+	g := s.rooms.GameOf(a)
+	if g == nil {
+		t.Fatal("no game")
+	}
+	g.mu.Lock()
+	over, away := g.over, g.clocks.away
+	s.endGame(g, 1, "Resign")
+	g.mu.Unlock()
+	if over || away[g.sideOf(b)-1].IsZero() {
+		t.Fatalf("over %v, away %v", over, away)
+	}
+	flush(t, a, ca)
+	if len(ca.packets(PacketTypeStartGame)) != 1 {
+		t.Fatal("no StartGame")
 	}
 }

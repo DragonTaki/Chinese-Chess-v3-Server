@@ -4,7 +4,7 @@
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2026/10/07
 // Update Date: 2026/10/07
-// Version: v1.0
+// Version: v1.1
 /* ----- ----- ----- ----- */
 
 package server
@@ -391,11 +391,26 @@ func (m *RoomManager) BeginGame(r *Room) ([]player, bool) {
 	return r.players(), true
 }
 
-// SetGame records r's game in progress.
-func (m *RoomManager) SetGame(r *Room, g *game) {
+// SetGame records r's game in progress, when each of its players still holds its seat by the same
+// connection and that connection is open. Otherwise someone left or disconnected after BeginGame
+// and the start fails (ONLINE-PLAY 8.18): r is back to waiting with everyone's ready cleared, and
+// SetGame returns false. Once it returns true a disconnect is an in-game one (away).
+func (m *RoomManager) SetGame(r *Room, g *game) bool {
 	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, p := range g.players {
+		i := r.seatOf(p.id)
+		if p.id == "" || i < 0 || r.seats[i].client != p.conn || p.conn.Closed() {
+			r.State = RoomWaiting
+			r.game = nil
+			for j := range r.seats {
+				r.seats[j].ready = false
+			}
+			return false
+		}
+	}
 	r.game = g
-	m.mu.Unlock()
+	return true
 }
 
 // GameOf is the game in progress in c's room; nil when there is none (or c does not hold its
