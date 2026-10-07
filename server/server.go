@@ -24,6 +24,7 @@ type Server struct {
 	dbConn  *gorm.DB
 	rules   *rules.Host // checks moves; nil when CHESS_RULES_PATH is not set (games are not implemented yet)
 	clients map[*Client]bool
+	rooms   *RoomManager
 	mu      sync.Mutex
 }
 
@@ -33,6 +34,7 @@ func NewServer(dbConn *gorm.DB, rulesHost *rules.Host) *Server {
 		dbConn:  dbConn,
 		rules:   rulesHost,
 		clients: make(map[*Client]bool),
+		rooms:   NewRoomManager(),
 	}
 }
 
@@ -68,6 +70,8 @@ func (s *Server) RemoveClient(c *Client) {
 	_, present := s.clients[c]
 	delete(s.clients, c)
 	s.mu.Unlock()
+	// A disconnect leaves the room (a game in progress is handled with the games).
+	s.leaveRoom(c, false)
 	// A client the heartbeat already dropped for timing out was logged there.
 	if present {
 		logger.Warnf("Client disconnected: %s", c.RemoteAddr)

@@ -20,8 +20,12 @@ const (
 	PacketTypeAuthResponse PacketType = "AuthResponse"
 
 	// Room
-	PacketTypeJoinRoom  PacketType = "JoinRoom"
-	PacketTypeLeaveRoom PacketType = "LeaveRoom"
+	PacketTypeRoomList   PacketType = "RoomList"
+	PacketTypeCreateRoom PacketType = "CreateRoom"
+	PacketTypeJoinRoom   PacketType = "JoinRoom"
+	PacketTypeLeaveRoom  PacketType = "LeaveRoom"
+	PacketTypeReady      PacketType = "Ready"
+	PacketTypeRoomState  PacketType = "RoomState"
 
 	// Chess game
 	PacketTypeStartGame  PacketType = "StartGame"

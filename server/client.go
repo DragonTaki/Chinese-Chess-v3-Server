@@ -30,10 +30,12 @@ type Client struct {
 	LastSeenAt      time.Time
 	IsAuthenticated bool
 	SenderId        string // The account's user id, set when authenticated
+	DisplayName     string // The account's name (Username, else Email), set when authenticated
 	Token           string
 	RoomId          string
 
-	mu sync.Mutex
+	mu     sync.Mutex
+	sendMu sync.Mutex // one packet at a time on the connection (room updates come from other goroutines)
 
 	// When the token's last-seen time was last written (only the client's own goroutine uses it).
 	tokenSeenWrittenAt time.Time
@@ -53,11 +55,12 @@ func (c *Client) LastSeen() time.Time {
 	return c.LastSeenAt
 }
 
-// MarkAuthenticated records a successful handshake: the client's id and token, and now as last seen.
-func (c *Client) MarkAuthenticated(senderId, token string) {
+// MarkAuthenticated records a successful handshake: the client's id, display name and token, and now as last seen.
+func (c *Client) MarkAuthenticated(senderId, name, token string) {
 	c.mu.Lock()
 	c.IsAuthenticated = true
 	c.SenderId = senderId
+	c.DisplayName = name
 	c.Token = token
 	c.LastSeenAt = time.Now()
 	c.mu.Unlock()
@@ -143,7 +146,10 @@ func (c *Client) Listen() {
 			// A sign of life (already recorded above); also kept on the session token, throttled.
 			c.recordTokenSeen()
 		default:
-			// Rooms and games are not implemented yet; anything else is not a client packet.
+			if c.Server.handleRoomPacket(c, pkt) {
+				continue
+			}
+			// Games are not implemented yet; anything else is not a client packet.
 			errPkt := CreatePacket(PacketTypeError, "Server", "", fmt.Sprintf("Unsupported packet type: %s", pkt.Type), "")
 			c.SendPacket(errPkt)
 		}
@@ -155,9 +161,25 @@ func (c *Client) Listen() {
 	}
 }
 
-// SendPacket sends a Packet to the client as JSON
+// SendPacket sends a Packet to the client as JSON (one line); safe from any goroutine.
 func (c *Client) SendPacket(pkt *Packet) {
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
 	fmt.Fprintln(c.Connection, pkt.SerializePacket())
+}
+
+// Name is the account's display name.
+func (c *Client) Name() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.DisplayName
+}
+
+// SetRoom records the room c is in ("" for none).
+func (c *Client) SetRoom(roomId string) {
+	c.mu.Lock()
+	c.RoomId = roomId
+	c.mu.Unlock()
 }
 
 // recordTokenSeen writes the token's last-seen time (db.UpdateTokenHeartbeat), at most once per

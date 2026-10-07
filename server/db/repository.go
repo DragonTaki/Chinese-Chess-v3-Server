@@ -71,3 +71,16 @@ func VerifyUser(db *gorm.DB, email string, password string) (string, string, boo
 
 	return user.UID, token, true
 }
+
+// UserName returns the display name of the user with id uid: its Username, or its Email when the
+// nickname is empty; "" when there is no such user.
+func UserName(db *gorm.DB, uid string) string {
+	var user User
+	if err := db.First(&user, "uid = ?", uid).Error; err != nil {
+		return ""
+	}
+	if user.Username != "" {
+		return user.Username
+	}
+	return user.Email
+}

@@ -87,7 +87,7 @@ func (s *Server) Authenticate(c *Client, scanner *bufio.Scanner, timeout time.Du
 
 				// Auth success. The client is known by its account's id from now on, never by the
 				// id it puts in its packets (the client is untrusted).
-				c.MarkAuthenticated(uid, token)
+				c.MarkAuthenticated(uid, db.UserName(dbConn, uid), token)
 
 				respPkt := CreatePacket(PacketTypeAuthResponse, "Server", "", AuthSuccessString, token)
 				c.SendPacket(respPkt)
