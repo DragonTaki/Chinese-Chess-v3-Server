@@ -53,7 +53,7 @@ type game struct {
 	room      *Room
 	kind      string
 	rules     map[string]bool
-	players   []*Client // in turn order: players[0] is Player1 (red, moves first)
+	players   []player // in turn order: players[0] is Player1 (red, moves first)
 	position  rules.Position
 	history   rules.History
 	moves     []moveEntry
@@ -63,6 +63,13 @@ type game struct {
 	deadline  *time.Timer   // fires at the clocks' next expiry; nil when none is armed
 	gen       uint64        // bumped on every re-arm and at the end: a stale deadline callback does nothing
 	done      chan struct{} // closed by endGame (once): stops the game's TimerSync goroutine
+}
+
+// player is one player of a game: the account, and the connection its packets go to (swapped by
+// rebind).
+type player struct {
+	id   string
+	conn *Client
 }
 
 // ClockView is one side's clock as sent: the total time used and the current move's time (ms).
@@ -143,14 +150,27 @@ func (s *Server) endIfExpired(g *game, now time.Time) bool {
 	return true
 }
 
-// sideOf is c's player number (1, 2); 0 when c does not play in g.
+// sideOf is the player number (1, 2) of c's account; 0 when it does not play in g.
 func (g *game) sideOf(c *Client) int {
+	id := c.Id()
 	for i, p := range g.players {
-		if p == c {
+		if id != "" && p.id == id {
 			return i + 1
 		}
 	}
 	return 0
+}
+
+// rebind makes c the connection of accountId's player (g's lock held); false when the account does
+// not play in g. (For resuming after a re-login; not used yet.)
+func (g *game) rebind(accountId string, c *Client) bool {
+	for i, p := range g.players {
+		if accountId != "" && p.id == accountId {
+			g.players[i].conn = c
+			return true
+		}
+	}
+	return false
 }
 
 // randomBool is a fair coin from crypto/rand.
@@ -242,10 +262,14 @@ func (s *Server) startGame(r *Room) {
 	first := players[0]
 	switch r.Settings.FirstMover {
 	case "Host":
-		first = host
+		for _, p := range players {
+			if p.id == host {
+				first = p
+			}
+		}
 	case "Guest":
 		for _, p := range players {
-			if p != host {
+			if p.id != host {
 				first = p
 			}
 		}
@@ -254,9 +278,9 @@ func (s *Server) startGame(r *Room) {
 			first = players[1]
 		}
 	}
-	ordered := []*Client{first}
+	ordered := []player{first}
 	for _, p := range players {
-		if p != first {
+		if p.id != first.id {
 			ordered = append(ordered, p)
 		}
 	}
@@ -281,14 +305,14 @@ func (s *Server) startGame(r *Room) {
 
 	views := make([]SeatView, len(ordered))
 	for i, p := range ordered {
-		views[i] = SeatView{Id: p.Id(), Name: p.Name()}
+		views[i] = SeatView{Id: p.id, Name: p.conn.Name()}
 	}
 	for i, p := range ordered {
 		data, _ := json.Marshal(StartGameData{
 			GameId: g.id, Kind: g.kind, Rules: g.rules, Timer: r.Settings.Timer,
 			Players: views, YourSide: i + 1, Position: g.position, Clocks: g.clocksAt(now),
 		})
-		p.SendPacket(CreatePacket(PacketTypeStartGame, "Server", r.Id, string(data), ""))
+		p.conn.SendPacket(CreatePacket(PacketTypeStartGame, "Server", r.Id, string(data), ""))
 	}
 	s.sendRoomState(r)
 	go s.syncTimers(g)
@@ -312,7 +336,7 @@ func (s *Server) syncTimers(g *game) {
 		}
 		data, _ := json.Marshal(g.clocksAt(time.Now()))
 		for _, p := range g.players {
-			p.SendPacket(CreatePacket(PacketTypeTimerSync, "Server", g.room.Id, string(data), ""))
+			p.conn.SendPacket(CreatePacket(PacketTypeTimerSync, "Server", g.room.Id, string(data), ""))
 		}
 		g.mu.Unlock()
 	}
@@ -380,7 +404,7 @@ func (s *Server) handleGameAction(c *Client, pkt *Packet) {
 		update := GameUpdateData{Seq: act.Seq, Ply: len(g.moves), Mover: side, Record: res.Record, Position: &g.position, Check: res.Check, Clocks: g.clocksAt(now)}
 		data, _ := json.Marshal(update)
 		for _, p := range g.players {
-			p.SendPacket(CreatePacket(PacketTypeGameUpdate, "Server", g.room.Id, string(data), ""))
+			p.conn.SendPacket(CreatePacket(PacketTypeGameUpdate, "Server", g.room.Id, string(data), ""))
 		}
 		if res.GameOver != nil {
 			s.endGame(g, res.GameOver.Winner, res.GameOver.Reason)
@@ -404,12 +428,12 @@ func (s *Server) endGame(g *game, winner int, reason string) {
 	g.stopDeadline()
 	data, _ := json.Marshal(EndGameData{Winner: winner, Reason: reason})
 	for _, p := range g.players {
-		p.SendPacket(CreatePacket(PacketTypeEndGame, "Server", g.room.Id, string(data), ""))
+		p.conn.SendPacket(CreatePacket(PacketTypeEndGame, "Server", g.room.Id, string(data), ""))
 	}
 
 	ids := make([]string, len(g.players))
 	for i, p := range g.players {
-		ids[i] = p.Id()
+		ids[i] = p.id
 	}
 	record := &db.Game{
 		ID: g.id, Kind: g.kind, Mode: g.room.Settings.Mode, Players: mustJSON(ids), Reason: reason,

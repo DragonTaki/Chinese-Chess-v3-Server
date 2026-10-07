@@ -124,10 +124,12 @@ func contains(list []string, s string) bool {
 	return false
 }
 
-// seat is one place at a room's table; client is nil while it is free.
+// seat is one place at a room's table, held by an account: accountId is who sits there ("" while
+// it is free), client the connection the seat's packets go to (swapped by rebind).
 type seat struct {
-	client *Client
-	ready  bool
+	accountId string
+	client    *Client
+	ready     bool
 }
 
 // Room is a table players sit at: its settings, its host and its seats. Guarded by the
@@ -135,7 +137,7 @@ type seat struct {
 type Room struct {
 	Id       string
 	Settings RoomSettings
-	Host     *Client
+	HostId   string // the host's account id
 	State    string
 	seats    []seat
 	game     *game // the game in progress; nil while waiting
@@ -158,47 +160,99 @@ type RoomView struct {
 }
 
 func (r *Room) view() RoomView {
-	v := RoomView{RoomId: r.Id, Settings: r.Settings, State: r.State, Seats: make([]*SeatView, len(r.seats))}
-	if r.Host != nil {
-		v.HostId = r.Host.Id()
-	}
+	v := RoomView{RoomId: r.Id, Settings: r.Settings, HostId: r.HostId, State: r.State, Seats: make([]*SeatView, len(r.seats))}
 	for i, s := range r.seats {
-		if s.client != nil {
-			v.Seats[i] = &SeatView{Id: s.client.Id(), Name: s.client.Name(), Ready: s.ready}
+		if s.accountId != "" {
+			v.Seats[i] = &SeatView{Id: s.accountId, Name: s.client.Name(), Ready: s.ready}
 		}
 	}
 	return v
 }
 
+// members is the connections of everyone seated in r (to send to).
 func (r *Room) members() []*Client {
 	var list []*Client
 	for _, s := range r.seats {
-		if s.client != nil {
+		if s.accountId != "" {
 			list = append(list, s.client)
 		}
 	}
 	return list
 }
 
-func (r *Room) seatOf(c *Client) int {
+// players is everyone seated in r, in seat order.
+func (r *Room) players() []player {
+	var list []player
+	for _, s := range r.seats {
+		if s.accountId != "" {
+			list = append(list, player{id: s.accountId, conn: s.client})
+		}
+	}
+	return list
+}
+
+// seatOf is the seat of the account accountId ("": the first free seat); -1 when there is none.
+func (r *Room) seatOf(accountId string) int {
 	for i, s := range r.seats {
-		if s.client == c {
+		if s.accountId == accountId {
 			return i
 		}
 	}
 	return -1
 }
 
-// RoomManager keeps every room; one lock for all of them (rooms change rarely).
+// rebind makes c the connection of accountId's seat (the RoomManager's lock held); false when the
+// account has no seat in r. (For resuming after a re-login; not used yet.)
+func (r *Room) rebind(accountId string, c *Client) bool {
+	i := r.seatOf(accountId)
+	if accountId == "" || i < 0 {
+		return false
+	}
+	r.seats[i].client = c
+	return true
+}
+
+// RoomManager keeps every room; one lock for all of them (rooms change rarely). Players are known
+// by their account id; only the connection holding a seat acts for it (a second connection of the
+// same account is in no room).
 type RoomManager struct {
 	mu     sync.Mutex
 	rooms  map[string]*Room
-	byUser map[*Client]*Room
+	byUser map[string]*Room // by account id
 }
 
 // NewRoomManager makes an empty room manager.
 func NewRoomManager() *RoomManager {
-	return &RoomManager{rooms: map[string]*Room{}, byUser: map[*Client]*Room{}}
+	return &RoomManager{rooms: map[string]*Room{}, byUser: map[string]*Room{}}
+}
+
+// roomOf is the room c's account is in and c's seat in it (lock held); nil when the account is in
+// no room or c is not the connection holding its seat.
+func (m *RoomManager) roomOf(c *Client) (*Room, int) {
+	id := c.Id()
+	if id == "" {
+		return nil, -1
+	}
+	r, ok := m.byUser[id]
+	if !ok {
+		return nil, -1
+	}
+	i := r.seatOf(id)
+	if r.seats[i].client != c {
+		return nil, -1
+	}
+	return r, i
+}
+
+// inRoom reports whether c's account is in a room, by any connection (lock held). An
+// unauthenticated client counts as in one, so it can never take a seat.
+func (m *RoomManager) inRoom(c *Client) bool {
+	id := c.Id()
+	if id == "" {
+		return true
+	}
+	_, in := m.byUser[id]
+	return in
 }
 
 // newRoomId returns an unused six-digit room number (房號), drawn with crypto/rand.
@@ -222,13 +276,14 @@ func (m *RoomManager) Create(c *Client, settings RoomSettings) (*Room, string, s
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, in := m.byUser[c]; in {
+	if m.inRoom(c) {
 		return nil, RoomErrAlreadyInRoom, ""
 	}
-	r := &Room{Id: m.newRoomId(), Settings: settings, Host: c, State: RoomWaiting, seats: make([]seat, seatCount[settings.Kind])}
-	r.seats[0].client = c
+	id := c.Id()
+	r := &Room{Id: m.newRoomId(), Settings: settings, HostId: id, State: RoomWaiting, seats: make([]seat, seatCount[settings.Kind])}
+	r.seats[0] = seat{accountId: id, client: c}
 	m.rooms[r.Id] = r
-	m.byUser[c] = r
+	m.byUser[id] = r
 	return r, "", ""
 }
 
@@ -236,7 +291,7 @@ func (m *RoomManager) Create(c *Client, settings RoomSettings) (*Room, string, s
 func (m *RoomManager) Join(c *Client, roomId string) (*Room, string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, in := m.byUser[c]; in {
+	if m.inRoom(c) {
 		return nil, RoomErrAlreadyInRoom
 	}
 	r, ok := m.rooms[roomId]
@@ -246,15 +301,16 @@ func (m *RoomManager) Join(c *Client, roomId string) (*Room, string) {
 	if r.State != RoomWaiting {
 		return nil, RoomErrRoomNotWaiting
 	}
-	free := r.seatOf(nil)
+	free := r.seatOf("")
 	if free < 0 {
 		return nil, RoomErrRoomFull
 	}
-	r.seats[free].client = c
+	id := c.Id()
+	r.seats[free] = seat{accountId: id, client: c}
 	for i := range r.seats {
 		r.seats[i].ready = false
 	}
-	m.byUser[c] = r
+	m.byUser[id] = r
 	return r, ""
 }
 
@@ -264,39 +320,40 @@ func (m *RoomManager) Join(c *Client, roomId string) (*Room, string) {
 func (m *RoomManager) Leave(c *Client) (*Room, []*Client) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	r, ok := m.byUser[c]
-	if !ok {
+	r, i := m.roomOf(c)
+	if r == nil {
 		return nil, nil
 	}
-	delete(m.byUser, c)
-	r.seats[r.seatOf(c)] = seat{}
+	id := r.seats[i].accountId
+	delete(m.byUser, id)
+	r.seats[i] = seat{}
 	for i := range r.seats {
 		r.seats[i].ready = false
 	}
-	rest := r.members()
+	rest := r.players()
 	if len(rest) == 0 {
 		delete(m.rooms, r.Id)
-	} else if r.Host == c {
-		r.Host = rest[0]
+	} else if r.HostId == id {
+		r.HostId = rest[0].id
 	}
-	return r, rest
+	return r, r.members()
 }
 
 // SetReady sets c's ready mark; it returns the room, whether every seat is taken and ready, and an error code.
 func (m *RoomManager) SetReady(c *Client, ready bool) (*Room, bool, string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	r, ok := m.byUser[c]
-	if !ok {
+	r, i := m.roomOf(c)
+	if r == nil {
 		return nil, false, RoomErrNotInRoom
 	}
 	if r.State != RoomWaiting {
 		return nil, false, RoomErrRoomNotWaiting
 	}
-	r.seats[r.seatOf(c)].ready = ready
+	r.seats[i].ready = ready
 	all := true
 	for _, s := range r.seats {
-		if s.client == nil || !s.ready {
+		if s.accountId == "" || !s.ready {
 			all = false
 		}
 	}
@@ -310,28 +367,28 @@ func (m *RoomManager) Members(r *Room) []*Client {
 	return r.members()
 }
 
-// HostOf is r's host.
-func (m *RoomManager) HostOf(r *Room) *Client {
+// HostOf is r's host's account id.
+func (m *RoomManager) HostOf(r *Room) string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return r.Host
+	return r.HostId
 }
 
 // BeginGame marks r playing when every seat is taken and ready; it returns the players in seat
 // order and false when the room cannot start (someone left or unreadied meanwhile, or it already started).
-func (m *RoomManager) BeginGame(r *Room) ([]*Client, bool) {
+func (m *RoomManager) BeginGame(r *Room) ([]player, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if r.State != RoomWaiting {
 		return nil, false
 	}
 	for _, s := range r.seats {
-		if s.client == nil || !s.ready {
+		if s.accountId == "" || !s.ready {
 			return nil, false
 		}
 	}
 	r.State = RoomPlaying
-	return r.members(), true
+	return r.players(), true
 }
 
 // SetGame records r's game in progress.
@@ -341,11 +398,12 @@ func (m *RoomManager) SetGame(r *Room, g *game) {
 	m.mu.Unlock()
 }
 
-// GameOf is the game in progress in c's room; nil when there is none.
+// GameOf is the game in progress in c's room; nil when there is none (or c does not hold its
+// account's seat).
 func (m *RoomManager) GameOf(c *Client) *game {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if r, ok := m.byUser[c]; ok {
+	if r, _ := m.roomOf(c); r != nil {
 		return r.game
 	}
 	return nil
