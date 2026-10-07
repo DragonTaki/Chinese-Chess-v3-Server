@@ -4,7 +4,7 @@
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
 // Update Date: 2026/10/07
-// Version: v1.4
+// Version: v1.5
 /* ----- ----- ----- ----- */
 
 package server
@@ -23,7 +23,13 @@ const (
 	AuthFailVersionMismatch    = "VersionMismatch"
 	AuthFailMissingCredentials = "MissingCredentials"
 	AuthFailInvalidCredentials = "InvalidCredentials"
+	// Another live connection of the account exists, from too far away (ONLINE-PLAY 8.24).
+	AuthFailAlreadyLoggedIn = "AlreadyLoggedIn"
 )
+
+// AuthReplacedByNewLogin is the Data of the AuthResponse sent to a logged-in connection replaced by
+// a new login of its account from the same place (ONLINE-PLAY 8.24); the connection is closed after it.
+const AuthReplacedByNewLogin = "ReplacedByNewLogin"
 
 // MaxPacketSize is the longest packet line accepted (bytes); a longer line ends the connection.
 const MaxPacketSize = 1 << 20

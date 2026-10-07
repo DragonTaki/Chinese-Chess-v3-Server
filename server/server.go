@@ -4,7 +4,7 @@
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
 // Update Date: 2026/10/07
-// Version: v1.3
+// Version: v1.4
 /* ----- ----- ----- ----- */
 
 package server
@@ -23,9 +23,11 @@ import (
 type Server struct {
 	dbConn  *gorm.DB
 	rules   *rules.Host // checks moves; nil when CHESS_RULES_PATH is not set (games are not implemented yet)
+	geo     geoLookup   // places logins (duplicate-login rule); nil without a database (SetGeoDB)
 	clients map[*Client]bool
 	rooms   *RoomManager
 	mu      sync.Mutex
+	loginMu sync.Mutex // one login admitted at a time (login)
 }
 
 // NewServer creates a server using dbConn and the rules host (may be nil).
@@ -36,6 +38,11 @@ func NewServer(dbConn *gorm.DB, rulesHost *rules.Host) *Server {
 		clients: make(map[*Client]bool),
 		rooms:   NewRoomManager(),
 	}
+}
+
+// SetGeoDB makes the duplicate-login rule place public addresses with db (call before serving).
+func (s *Server) SetGeoDB(db *GeoDB) {
+	s.geo = db.Lookup
 }
 
 // HandleNewClient registers a new connection and serves it until it ends (call in its own goroutine).

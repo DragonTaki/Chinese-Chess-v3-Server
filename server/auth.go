@@ -3,8 +3,8 @@
 // Do not distribute or modify
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
-// Update Date: 2026/10/06
-// Version: v1.2
+// Update Date: 2026/10/07
+// Version: v1.3
 /* ----- ----- ----- ----- */
 
 package server
@@ -25,11 +25,18 @@ type AuthMessage struct {
 }
 
 // Authenticate runs the two-stage handshake (version, then username / password) on c, reading
-// with scanner (the connection's only reader, shared with Client.Listen). Returns true on
-// success; false on failure or when it does not finish within timeout.
+// with scanner (the connection's only reader, shared with Client.Listen), then admits the account
+// (login: the duplicate-login rule). Returns true on success; false on failure, refusal or when it
+// does not finish within timeout.
 func (s *Server) Authenticate(c *Client, scanner *bufio.Scanner, timeout time.Duration) bool {
 	dbConn := s.dbConn
-	authCh := make(chan bool, 1)
+	// The verified account (ok false: the handshake failed); admitted by login back on the caller's
+	// goroutine, so it runs before this connection's RemoveClient can.
+	type verified struct {
+		ok               bool
+		uid, name, token string
+	}
+	authCh := make(chan verified, 1)
 
 	go func() {
 		// Stage 1: Version
@@ -60,7 +67,7 @@ func (s *Server) Authenticate(c *Client, scanner *bufio.Scanner, timeout time.Du
 				if ad.Version != ServerVersion {
 					logger.Warnf("Version mismatch from %s: %s != %s", c.RemoteAddr, ad.Version, ServerVersion)
 					s.rejectAuth(c, AuthFailVersionMismatch)
-					authCh <- false
+					authCh <- verified{}
 					return
 				}
 
@@ -73,7 +80,7 @@ func (s *Server) Authenticate(c *Client, scanner *bufio.Scanner, timeout time.Du
 				if ad.Username == "" || ad.Password == "" {
 					logger.Warnf("Missing username/password from %s", c.RemoteAddr)
 					s.rejectAuth(c, AuthFailMissingCredentials)
-					authCh <- false
+					authCh <- verified{}
 					return
 				}
 
@@ -81,33 +88,71 @@ func (s *Server) Authenticate(c *Client, scanner *bufio.Scanner, timeout time.Du
 				if !ok {
 					logger.Warnf("Invalid credentials from %s", c.RemoteAddr)
 					s.rejectAuth(c, AuthFailInvalidCredentials)
-					authCh <- false
+					authCh <- verified{}
 					return
 				}
 
-				// Auth success. The client is known by its account's id from now on, never by the
-				// id it puts in its packets (the client is untrusted).
-				c.MarkAuthenticated(uid, db.UserName(dbConn, uid), token)
-
-				respPkt := CreatePacket(PacketTypeAuthResponse, "Server", "", AuthSuccessString, token)
-				c.SendPacket(respPkt)
-
-				authCh <- true
+				authCh <- verified{ok: true, uid: uid, name: db.UserName(dbConn, uid), token: token}
 				return
 			}
 		}
 	}()
 
 	select {
-	case ok := <-authCh:
-		if ok {
-			logger.Infof("Client %s authenticated successfully", c.RemoteAddr)
+	case v := <-authCh:
+		if !v.ok || !s.login(c, v.uid, v.name, v.token) {
+			return false
 		}
-		return ok
+		logger.Infof("Client %s authenticated successfully", c.RemoteAddr)
+		return true
 	case <-time.After(timeout):
 		logger.Warnf("Client %s failed to authenticate in time", c.RemoteAddr)
 		return false
 	}
+}
+
+// login admits c as the account uid whose credentials it just proved, under the duplicate-login
+// rule (ONLINE-PLAY 8.14, 8.24): when another live connection of the account exists, c replaces it
+// if both come from the same place (closeLogins) and is refused (AuthFailAlreadyLoggedIn)
+// otherwise. A replaced connection is told so (AuthReplacedByNewLogin) and closed. An earlier
+// connection that is already dead (closed, or gone from the server) is no obstacle: this is a
+// reconnect. Logins are handled one at a time (loginMu), so two at once cannot both pass. Returns
+// whether c was admitted (it was then sent the successful AuthResponse).
+func (s *Server) login(c *Client, uid, name, token string) bool {
+	s.loginMu.Lock()
+	defer s.loginMu.Unlock()
+	others := s.liveSessions(c, uid)
+	for _, o := range others {
+		if !closeLogins(o.RemoteAddr, c.RemoteAddr, s.geo) {
+			logger.Warnf("Login of %s from %s refused: already logged in from %s", uid, c.RemoteAddr, o.RemoteAddr)
+			s.rejectAuth(c, AuthFailAlreadyLoggedIn)
+			return false
+		}
+	}
+
+	// The client is known by its account's id from now on, never by the id it puts in its packets
+	// (the client is untrusted).
+	c.MarkAuthenticated(uid, name, token)
+	c.SendPacket(CreatePacket(PacketTypeAuthResponse, "Server", "", AuthSuccessString, token))
+
+	for _, o := range others {
+		logger.Infof("Connection %s of %s replaced by a new login from %s", o.RemoteAddr, uid, c.RemoteAddr)
+		o.SendPacket(CreatePacket(PacketTypeAuthResponse, "Server", "", AuthReplacedByNewLogin, ""))
+		o.Finish()
+	}
+	return true
+}
+
+// liveSessions is every other connection of the account uid that is still open (normally at most
+// one).
+func (s *Server) liveSessions(c *Client, uid string) []*Client {
+	var list []*Client
+	for _, o := range s.snapshotClients() {
+		if o != c && o.Id() == uid && !o.Closed() {
+			list = append(list, o)
+		}
+	}
+	return list
 }
 
 // rejectAuth tells the client why its handshake failed (a failed AuthResponse, reason in Data).

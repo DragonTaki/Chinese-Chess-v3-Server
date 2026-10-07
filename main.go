@@ -4,7 +4,7 @@
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
 // Update Date: 2026/10/07
-// Version: v1.3
+// Version: v1.4
 /* ----- ----- ----- ----- */
 
 package main
@@ -41,7 +41,8 @@ func tlsConfig() (*tls.Config, error) {
 // connection. Environment: JWT_SECRET (required, see server/jwt), CHESS_TLS_CERT and CHESS_TLS_KEY
 // (required: the PEM certificate and key), CHESS_LISTEN_ADDR (default DefaultListenAddr),
 // CHESS_DB_PATH (default db.DefaultPath), CHESS_RULES_PATH (the built rules host from the rules
-// submodule; optional until games are implemented).
+// submodule; optional until games are implemented), CHESS_GEOIP_DB (the DB-IP Lite City mmdb of
+// the duplicate-login rule; optional: without it only the same IP counts as the same place).
 func main() {
 	fmt.Println("== Server Booting ==")
 
@@ -67,6 +68,19 @@ func main() {
 
 	// Create server instance
 	srv := server.NewServer(dbConn, rulesHost)
+
+	// The IP geolocation database of the duplicate-login rule, when configured
+	if path := os.Getenv("CHESS_GEOIP_DB"); path != "" {
+		geo, err := server.OpenGeoDB(path)
+		if err != nil {
+			logger.Warnf("Could not open the geolocation database %s: %v (a second login replaces the first only from the same IP or two local addresses)", path, err)
+		} else {
+			defer geo.Close()
+			srv.SetGeoDB(geo)
+		}
+	} else {
+		logger.Warnf("CHESS_GEOIP_DB is not set: no geolocation (a second login replaces the first only from the same IP or two local addresses)")
+	}
 
 	// Launch heartbeat system
 	srv.StartHeartbeatSystem()
