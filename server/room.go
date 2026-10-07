@@ -4,7 +4,7 @@
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2026/10/07
 // Update Date: 2026/10/07
-// Version: v1.1
+// Version: v1.2
 /* ----- ----- ----- ----- */
 
 package server
@@ -202,7 +202,7 @@ func (r *Room) seatOf(accountId string) int {
 }
 
 // rebind makes c the connection of accountId's seat (the RoomManager's lock held); false when the
-// account has no seat in r. (For resuming after a re-login; not used yet.)
+// account has no seat in r. For resuming after a re-login (resume).
 func (r *Room) rebind(accountId string, c *Client) bool {
 	i := r.seatOf(accountId)
 	if accountId == "" || i < 0 {
@@ -213,8 +213,8 @@ func (r *Room) rebind(accountId string, c *Client) bool {
 }
 
 // RoomManager keeps every room; one lock for all of them (rooms change rarely). Players are known
-// by their account id; only the connection holding a seat acts for it (a second connection of the
-// same account is in no room).
+// by their account id; only the connection holding a seat acts for it (a new login of the account
+// takes the seat over: resume).
 type RoomManager struct {
 	mu     sync.Mutex
 	rooms  map[string]*Room
@@ -411,6 +411,40 @@ func (m *RoomManager) SetGame(r *Room, g *game) bool {
 	}
 	r.game = g
 	return true
+}
+
+// SeatOf is the room the account id has a seat in and its game in progress (nil, nil: none).
+func (m *RoomManager) SeatOf(id string) (*Room, *game) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.byUser[id]
+	if !ok {
+		return nil, nil
+	}
+	return r, r.game
+}
+
+// RebindWaiting makes c the connection of the account id's seat in r while r has no game in
+// progress; false (nothing changed) when the account is no longer seated in r or a game is set.
+// A start under way (BeginGame done, SetGame not yet) then fails, as with a disconnect.
+func (m *RoomManager) RebindWaiting(r *Room, id string, c *Client) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.byUser[id] != r || r.game != nil {
+		return false
+	}
+	return r.rebind(id, c)
+}
+
+// RebindPlaying makes c the connection of the account id's seat in r while g is r's game (the
+// game's lock held); false (nothing changed) otherwise.
+func (m *RoomManager) RebindPlaying(r *Room, g *game, id string, c *Client) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.byUser[id] != r || r.game != g {
+		return false
+	}
+	return r.rebind(id, c)
 }
 
 // GameOf is the game in progress in c's room; nil when there is none (or c does not hold its

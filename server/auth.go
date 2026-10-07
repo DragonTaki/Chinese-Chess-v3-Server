@@ -114,7 +114,7 @@ func (s *Server) Authenticate(c *Client, scanner *bufio.Scanner, timeout time.Du
 // login admits c as the account uid whose credentials it just proved, under the duplicate-login
 // rule (ONLINE-PLAY 8.14, 8.24): when another live connection of the account exists, c replaces it
 // if both come from the same place (closeLogins) and is refused (AuthFailAlreadyLoggedIn)
-// otherwise. A replaced connection is told so (AuthReplacedByNewLogin) and closed. An earlier
+// otherwise. c then takes over the account's seat (resume). A replaced connection is told so (AuthReplacedByNewLogin) and closed. An earlier
 // connection that is already dead (closed, or gone from the server) is no obstacle: this is a
 // reconnect. Logins are handled one at a time (loginMu), so two at once cannot both pass. Returns
 // whether c was admitted (it was then sent the successful AuthResponse).
@@ -134,6 +134,10 @@ func (s *Server) login(c *Client, uid, name, token string) bool {
 	// (the client is untrusted).
 	c.MarkAuthenticated(uid, name, token)
 	c.SendPacket(CreatePacket(PacketTypeAuthResponse, "Server", "", AuthSuccessString, token))
+
+	// The account's seat (a game or a waiting room) moves to c before any replaced connection is
+	// closed, so that connection's disconnect finds no seat to leave or mark away.
+	s.resume(c)
 
 	for _, o := range others {
 		logger.Infof("Connection %s of %s replaced by a new login from %s", o.RemoteAddr, uid, c.RemoteAddr)

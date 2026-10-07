@@ -4,7 +4,7 @@
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2026/10/07
 // Update Date: 2026/10/07
-// Version: v1.1
+// Version: v1.2
 /* ----- ----- ----- ----- */
 
 package server
@@ -164,11 +164,12 @@ func (s *Server) endIfExpired(g *game, now time.Time) bool {
 	return true
 }
 
-// sideOf is the player number (1, 2) of c's account; 0 when it does not play in g.
+// sideOf is the player number (1, 2) of c in g (lock held): by the connection, not only the
+// account, so a connection replaced by a new login (see resume) no longer acts for its seat; 0 when
+// c does not play in g.
 func (g *game) sideOf(c *Client) int {
-	id := c.Id()
 	for i, p := range g.players {
-		if id != "" && p.id == id {
+		if p.conn == c {
 			return i + 1
 		}
 	}
@@ -176,7 +177,7 @@ func (g *game) sideOf(c *Client) int {
 }
 
 // rebind makes c the connection of accountId's player (g's lock held); false when the account does
-// not play in g. (For resuming after a re-login; not used yet.)
+// not play in g. For resuming after a re-login (resume).
 func (g *game) rebind(accountId string, c *Client) bool {
 	for i, p := range g.players {
 		if accountId != "" && p.id == accountId {
@@ -229,6 +230,24 @@ type StartGameData struct {
 	YourSide int             `json:"yourSide"`
 	Position rules.Position  `json:"position"`
 	Clocks   *ClocksData     `json:"clocks"`
+
+	// Set when a player rejoins its game after logging in again (resume): the number of moves made
+	// so far and the moves themselves (Position is the current one). Absent at the game's start.
+	Resumed bool        `json:"resumed,omitempty"`
+	Ply     int         `json:"ply,omitempty"`
+	Moves   []moveEntry `json:"moves,omitempty"`
+}
+
+// startGameData is the StartGame of g's player i (0-based) at now (lock held).
+func (g *game) startGameData(i int, now time.Time) StartGameData {
+	views := make([]SeatView, len(g.players))
+	for j, p := range g.players {
+		views[j] = SeatView{Id: p.id, Name: p.conn.Name()}
+	}
+	return StartGameData{
+		GameId: g.id, Kind: g.kind, Rules: g.rules, Timer: g.room.Settings.Timer,
+		Players: views, YourSide: i + 1, Position: g.position, Clocks: g.clocksAt(now),
+	}
 }
 
 // GameUpdateData is a validated action as every player sees it, or (Rejected set) an action of the
@@ -332,15 +351,8 @@ func (s *Server) launchGame(r *Room, players []player) {
 		p.conn.SetInGame(true)
 	}
 
-	views := make([]SeatView, len(ordered))
 	for i, p := range ordered {
-		views[i] = SeatView{Id: p.id, Name: p.conn.Name()}
-	}
-	for i, p := range ordered {
-		data, _ := json.Marshal(StartGameData{
-			GameId: g.id, Kind: g.kind, Rules: g.rules, Timer: r.Settings.Timer,
-			Players: views, YourSide: i + 1, Position: g.position, Clocks: g.clocksAt(now),
-		})
+		data, _ := json.Marshal(g.startGameData(i, now))
 		p.conn.SendPacket(CreatePacket(PacketTypeStartGame, "Server", r.Id, string(data), ""))
 	}
 	s.sendRoomState(r)
@@ -391,6 +403,69 @@ func (s *Server) setAway(g *game, c *Client, now time.Time) bool {
 	return true
 }
 
+// resume gives c, just logged in, its account's seat back (login, loginMu held): in a running
+// game the seat's player is rebound to c (seat and game), its side is back (setBack: the away
+// deadline is dropped), c is sent StartGame with resumed, ply and moves and the current clocks, and
+// every player a TimerSync (away cleared); in a waiting room the seat is rebound and the room's
+// state sent. The seat's previous connection (dead, or live and being replaced) no longer acts for
+// it: the game and the room know a player by its connection (sideOf, RoomManager.roomOf), so that
+// connection's late disconnect or packets find no seat. A game that ended meanwhile (or whose
+// clocks ran out: ended here first) is not resumed; its away player is out of the room already,
+// a live replaced one is rebound to the waiting room.
+func (s *Server) resume(c *Client) {
+	id := c.Id()
+	// The room / game may change between looking and locking: look again then (a game started or
+	// ended meanwhile; each can happen once at most while the account is not acting).
+	for attempt := 0; attempt < 4; attempt++ {
+		r, g := s.rooms.SeatOf(id)
+		if r == nil {
+			return
+		}
+		if g != nil {
+			if s.resumeGame(c, r, g) {
+				return
+			}
+			continue
+		}
+		if done := s.rooms.RebindWaiting(r, id, c); done {
+			c.SetRoom(r.Id)
+			s.sendRoomState(r)
+			logger.Infof("Room %s: %s rejoined", r.Id, id)
+			return
+		}
+	}
+}
+
+// resumeGame rebinds c's account's player of g (in room r) to c and sends the resume (see resume);
+// false when g is over (or ended now by its clocks) or no longer r's game, so the caller looks again.
+func (s *Server) resumeGame(c *Client, r *Room, g *game) bool {
+	id := c.Id()
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	now := time.Now()
+	if g.over || s.endIfExpired(g, now) {
+		return false
+	}
+	if !s.rooms.RebindPlaying(r, g, id, c) || !g.rebind(id, c) {
+		return false
+	}
+	side := g.sideOf(c)
+	g.clocks.setBack(side-1, now)
+	s.armDeadline(g, now)
+	c.SetRoom(r.Id)
+	c.SetInGame(true)
+	data := g.startGameData(side-1, now)
+	data.Resumed, data.Ply, data.Moves = true, len(g.moves), g.moves
+	b, _ := json.Marshal(data)
+	c.SendPacket(CreatePacket(PacketTypeStartGame, "Server", r.Id, string(b), ""))
+	view, _ := s.rooms.View(r)
+	b, _ = json.Marshal(view)
+	c.SendPacket(CreatePacket(PacketTypeRoomState, "Server", r.Id, string(b), ""))
+	s.sendTimerSync(g, now)
+	logger.Infof("Game %s: player %d is back", g.id, side)
+	return true
+}
+
 // handleGameAction checks and applies a player's action in its room's game.
 func (s *Server) handleGameAction(c *Client, pkt *Packet) {
 	// The action is timed when received: the rules host's time is not the mover's.
@@ -412,6 +487,10 @@ func (s *Server) handleGameAction(c *Client, pkt *Packet) {
 		return
 	}
 	side := g.sideOf(c)
+	if side == 0 { // c was replaced by a new login of its account meanwhile
+		s.reject(c, act.Seq, GameErrNoGame)
+		return
+	}
 	switch act.Type {
 	case "resign":
 		s.endGame(g, 3-side, "Resign")
