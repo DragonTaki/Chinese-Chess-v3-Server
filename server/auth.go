@@ -232,8 +232,10 @@ func (s *Server) liveSessions(c *Client, uid string) []*Client {
 
 // logout handles a Logout packet: the login token in its Data ({"refreshToken"}; may be absent)
 // is revoked when it is a live one of c's account, c is sent a Logout back and its connection ends
-// (the caller stops reading; the disconnect is handled as any other).
+// (the caller stops reading). A logout is explicit, like LeaveRoom: c first leaves its room at once
+// (a running game is resigned), so the disconnect that follows finds no room (no grace, no away).
 func (s *Server) logout(c *Client, pkt *Packet) {
+	s.leaveRoom(c, false)
 	var req struct {
 		RefreshToken string `json:"refreshToken"`
 	}
