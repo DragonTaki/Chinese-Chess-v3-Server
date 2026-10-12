@@ -4,7 +4,7 @@
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
 // Update Date: 2026/10/12
-// Version: v1.6
+// Version: v1.7
 /* ----- ----- ----- ----- */
 
 package server
@@ -71,6 +71,11 @@ const (
 // DisconnectGraceSeat is how long an away side keeps its seat (count-up clocks, or count-down
 // without the step timer) before it loses by ClockReasonDisconnect.
 const DisconnectGraceSeat = 15 * time.Second
+
+// RoomSeatGrace is how long a player whose connection ends while its room has no game running
+// keeps its seat (shown away, ready cleared) for logging in again before it leaves the room
+// (ONLINE-PLAY 8.28).
+const RoomSeatGrace = 5 * time.Second
 
 // TimerSyncInterval is how often a running game sends every player its clocks (TimerSync), so a
 // client's display stays near the server's between moves.

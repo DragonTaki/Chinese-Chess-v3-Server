@@ -3,8 +3,8 @@
 // Do not distribute or modify
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2026/10/07
-// Update Date: 2026/10/07
-// Version: v1.1
+// Update Date: 2026/10/12
+// Version: v1.2
 /* ----- ----- ----- ----- */
 
 package server
@@ -181,9 +181,11 @@ func TestDisconnectKeepsSeat(t *testing.T) {
 	}
 }
 
-// A disconnect outside a running game leaves the room, as LeaveRoom.
+// A disconnect outside a running game keeps the seat for the grace (away), then leaves the room as
+// LeaveRoom.
 func TestDisconnectOutsideGameLeaves(t *testing.T) {
 	s := NewServer(nil, nil)
+	s.seatGrace = 50 * time.Millisecond
 	a := NewClient(newFakeConn(), s)
 	b := NewClient(newFakeConn(), s)
 	a.MarkAuthenticated("a", "A", "")
@@ -191,9 +193,24 @@ func TestDisconnectOutsideGameLeaves(t *testing.T) {
 	r, _, _ := s.rooms.Create(a, testSettings())
 	s.rooms.Join(b, r.Id)
 	s.RemoveClient(a)
-	if s.rooms.HostOf(r) != "b" || len(s.rooms.Members(r)) != 1 {
+	if view, _ := s.rooms.View(r); view.HostId != "a" || !view.Seats[0].Away {
+		t.Fatal("seat not kept")
+	}
+	waitMembers(t, s, r, 1)
+	if s.rooms.HostOf(r) != "b" {
 		t.Fatal("disconnected host still in the room")
 	}
+}
+
+// waitMembers waits (up to 2 s) until r has n players seated.
+func waitMembers(t *testing.T, s *Server, r *Room, n int) {
+	t.Helper()
+	for end := time.Now().Add(2 * time.Second); time.Now().Before(end); time.Sleep(time.Millisecond) {
+		if len(s.rooms.Members(r)) == n {
+			return
+		}
+	}
+	t.Fatalf("%d players seated, not %d", len(s.rooms.Members(r)), n)
 }
 
 // When the game ends while a player is away, that player leaves the room (the host passes on) and
@@ -266,7 +283,8 @@ func readyRoom(t *testing.T, s *Server) (*Room, []player, *Client, *Client, *fak
 }
 
 // checkStartFailed checks that r's start failed for the remaining player a (ONLINE-PLAY 8.18): no
-// game, none recorded, no StartGame, a back in the waiting room (ready cleared, host) and not in game.
+// game, none recorded, no StartGame, a back in the waiting room (ready cleared, host) and not in
+// game, alone there once the other player's seat grace is over.
 func checkStartFailed(t *testing.T, s *Server, r *Room, a *Client, ca *fakeConn) {
 	t.Helper()
 	if s.rooms.GameOf(a) != nil {
@@ -280,6 +298,7 @@ func checkStartFailed(t *testing.T, s *Server, r *Room, a *Client, ca *fakeConn)
 	if a.inGame {
 		t.Fatal("remaining player in game")
 	}
+	waitMembers(t, s, r, 1)
 	view, members := s.rooms.View(r)
 	if view.State != RoomWaiting || len(members) != 1 || members[0] != a || view.HostId != "a" || view.Seats[0].Ready {
 		t.Fatalf("room %+v", view)
@@ -306,9 +325,10 @@ func testServer(t *testing.T) *Server {
 }
 
 // A player that disconnects after everyone is ready but before the game is set up makes the start
-// fail; it leaves the room.
+// fail; it leaves the room (after the waiting room's grace).
 func TestDisconnectBeforeStartFails(t *testing.T) {
 	s := testServer(t)
+	s.seatGrace = 50 * time.Millisecond
 	r, players, a, b, ca, cb := readyRoom(t, s)
 	cb.Close()
 	b.Finish()
@@ -321,6 +341,7 @@ func TestDisconnectBeforeStartFails(t *testing.T) {
 // fails, and the disconnect handled afterwards takes the player out of the waiting room.
 func TestClosedBeforeStartFails(t *testing.T) {
 	s := testServer(t)
+	s.seatGrace = 50 * time.Millisecond
 	r, players, a, b, ca, _ := readyRoom(t, s)
 	b.Close()
 	s.launchGame(r, players)

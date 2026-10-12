@@ -3,8 +3,8 @@
 // Do not distribute or modify
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2026/10/07
-// Update Date: 2026/10/07
-// Version: v1.2
+// Update Date: 2026/10/12
+// Version: v1.3
 /* ----- ----- ----- ----- */
 
 package server
@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"Chinese-Chess-v3-Server/logger"
 )
 
 // Online play (ONLINE-PLAY.md in the record repo): a player picks the game kind, then the mode.
@@ -125,11 +127,25 @@ func contains(list []string, s string) bool {
 }
 
 // seat is one place at a room's table, held by an account: accountId is who sits there ("" while
-// it is free), client the connection the seat's packets go to (swapped by rebind).
+// it is free), client the connection the seat's packets go to (swapped by rebind). away: the
+// connection ended while the room had no game (HoldSeat); the seat is kept until grace (its timer;
+// gen tells a late callback of an earlier grace apart) unless the account logs in again (rebind).
 type seat struct {
 	accountId string
 	client    *Client
 	ready     bool
+	away      bool
+	gen       uint64
+	grace     *time.Timer
+}
+
+// stopGrace stops the seat's grace timer (lock held); a callback already waiting finds the
+// generation changed or the seat not away.
+func (s *seat) stopGrace() {
+	if s.grace != nil {
+		s.grace.Stop()
+		s.grace = nil
+	}
 }
 
 // Room is a table players sit at: its settings, its host and its seats. Guarded by the
@@ -143,11 +159,13 @@ type Room struct {
 	game     *game // the game in progress; nil while waiting
 }
 
-// SeatView is one seat as the clients see it.
+// SeatView is one seat as the clients see it; Away: its player's connection ended while the room
+// waits, the seat is kept for RoomSeatGrace.
 type SeatView struct {
 	Id    string `json:"id"`
 	Name  string `json:"name"`
 	Ready bool   `json:"ready"`
+	Away  bool   `json:"away"`
 }
 
 // RoomView is a room as the clients see it (RoomState; one entry of RoomList). A free seat is null.
@@ -163,7 +181,7 @@ func (r *Room) view() RoomView {
 	v := RoomView{RoomId: r.Id, Settings: r.Settings, HostId: r.HostId, State: r.State, Seats: make([]*SeatView, len(r.seats))}
 	for i, s := range r.seats {
 		if s.accountId != "" {
-			v.Seats[i] = &SeatView{Id: s.accountId, Name: s.client.Name(), Ready: s.ready}
+			v.Seats[i] = &SeatView{Id: s.accountId, Name: s.client.Name(), Ready: s.ready, Away: s.away}
 		}
 	}
 	return v
@@ -201,14 +219,16 @@ func (r *Room) seatOf(accountId string) int {
 	return -1
 }
 
-// rebind makes c the connection of accountId's seat (the RoomManager's lock held); false when the
-// account has no seat in r. For resuming after a re-login (resume).
+// rebind makes c the connection of accountId's seat (the RoomManager's lock held), no longer away;
+// false when the account has no seat in r. For resuming after a re-login (resume).
 func (r *Room) rebind(accountId string, c *Client) bool {
 	i := r.seatOf(accountId)
 	if accountId == "" || i < 0 {
 		return false
 	}
 	r.seats[i].client = c
+	r.seats[i].stopGrace()
+	r.seats[i].away = false
 	return true
 }
 
@@ -216,9 +236,10 @@ func (r *Room) rebind(accountId string, c *Client) bool {
 // by their account id; only the connection holding a seat acts for it (a new login of the account
 // takes the seat over: resume).
 type RoomManager struct {
-	mu     sync.Mutex
-	rooms  map[string]*Room
-	byUser map[string]*Room // by account id
+	mu      sync.Mutex
+	rooms   map[string]*Room
+	byUser  map[string]*Room // by account id
+	seatGen uint64           // the last seat grace generation given (HoldSeat)
 }
 
 // NewRoomManager makes an empty room manager.
@@ -314,9 +335,8 @@ func (m *RoomManager) Join(c *Client, roomId string) (*Room, string) {
 	return r, ""
 }
 
-// Leave takes c out of its room (a disconnect too): the room is removed when empty, otherwise the
-// next seated player becomes the host if c was it, and everyone's ready is cleared. It returns the
-// room left (nil when c was in none) and the players still in it.
+// Leave takes c out of its room (also an away player when its game ends): see vacate. It returns
+// the room left (nil when c was in none) and the players still in it.
 func (m *RoomManager) Leave(c *Client) (*Room, []*Client) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -324,7 +344,15 @@ func (m *RoomManager) Leave(c *Client) (*Room, []*Client) {
 	if r == nil {
 		return nil, nil
 	}
+	m.vacate(r, i)
+	return r, r.members()
+}
+
+// vacate frees seat i of r (lock held): the room is removed when empty, otherwise the next seated
+// player becomes the host if the seat's was it, and everyone's ready is cleared.
+func (m *RoomManager) vacate(r *Room, i int) {
 	id := r.seats[i].accountId
+	r.seats[i].stopGrace()
 	delete(m.byUser, id)
 	r.seats[i] = seat{}
 	for i := range r.seats {
@@ -336,7 +364,43 @@ func (m *RoomManager) Leave(c *Client) (*Room, []*Client) {
 	} else if r.HostId == id {
 		r.HostId = rest[0].id
 	}
-	return r, r.members()
+}
+
+// HoldSeat keeps the seat of c, whose connection ended, while its room has no game in progress
+// (ONLINE-PLAY 8.28): the seat is away and its ready cleared (no game can begin with it), and after
+// grace expire is called with the room, the account and the hold's generation (see ExpireSeat).
+// It returns the room; nil (nothing changed) when c holds no seat or its room has a game.
+func (m *RoomManager) HoldSeat(c *Client, grace time.Duration, expire func(r *Room, id string, gen uint64)) *Room {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, i := m.roomOf(c)
+	if r == nil || r.game != nil {
+		return nil
+	}
+	m.seatGen++
+	st := &r.seats[i]
+	st.stopGrace()
+	st.away, st.ready, st.gen = true, false, m.seatGen
+	id, gen := st.accountId, st.gen
+	st.grace = time.AfterFunc(grace, func() { expire(r, id, gen) })
+	return r
+}
+
+// ExpireSeat ends the hold gen of the account id's seat in r: the seat is freed as with Leave and
+// the players still in r are returned. False (nothing changed) when the account logged in again
+// meanwhile, left or holds no seat in r any more.
+func (m *RoomManager) ExpireSeat(r *Room, id string, gen uint64) ([]*Client, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.byUser[id] != r {
+		return nil, false
+	}
+	i := r.seatOf(id)
+	if !r.seats[i].away || r.seats[i].gen != gen {
+		return nil, false
+	}
+	m.vacate(r, i)
+	return r.members(), true
 }
 
 // SetReady sets c's ready mark; it returns the room, whether every seat is taken and ready, and an error code.
@@ -353,7 +417,7 @@ func (m *RoomManager) SetReady(c *Client, ready bool) (*Room, bool, string) {
 	r.seats[i].ready = ready
 	all := true
 	for _, s := range r.seats {
-		if s.accountId == "" || !s.ready {
+		if s.accountId == "" || !s.ready || s.away {
 			all = false
 		}
 	}
@@ -374,8 +438,9 @@ func (m *RoomManager) HostOf(r *Room) string {
 	return r.HostId
 }
 
-// BeginGame marks r playing when every seat is taken and ready; it returns the players in seat
-// order and false when the room cannot start (someone left or unreadied meanwhile, or it already started).
+// BeginGame marks r playing when every seat is taken, ready and not away; it returns the players in
+// seat order and false when the room cannot start (someone left, unreadied or disconnected
+// meanwhile, or it already started).
 func (m *RoomManager) BeginGame(r *Room) ([]player, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -383,7 +448,7 @@ func (m *RoomManager) BeginGame(r *Room) ([]player, bool) {
 		return nil, false
 	}
 	for _, s := range r.seats {
-		if s.accountId == "" || !s.ready {
+		if s.accountId == "" || !s.ready || s.away {
 			return nil, false
 		}
 	}
@@ -580,7 +645,9 @@ func (s *Server) handleRoomPacket(c *Client, pkt *Packet) bool {
 }
 
 // disconnect handles c's connection ending: a player of a running game keeps its seat and is away
-// (setAway); anyone else leaves the room as with LeaveRoom, silently.
+// (setAway); one seated in a room without a game keeps its seat for seatGrace, away (HoldSeat; the
+// others are sent the room), and then leaves it (seatGraceOver) unless it logs in again meanwhile
+// (resume); anyone else is in no room.
 func (s *Server) disconnect(c *Client) {
 	if g := s.rooms.GameOf(c); g != nil {
 		g.mu.Lock()
@@ -592,7 +659,22 @@ func (s *Server) disconnect(c *Client) {
 			return
 		}
 	}
+	if r := s.rooms.HoldSeat(c, s.seatGrace, s.seatGraceOver); r != nil {
+		s.sendRoomState(r)
+		return
+	}
 	s.leaveRoom(c, false)
+}
+
+// seatGraceOver is a held seat's grace running out (HoldSeat): its player leaves the room and the
+// others are sent it, unless the hold ended meanwhile.
+func (s *Server) seatGraceOver(r *Room, id string, gen uint64) {
+	if rest, ok := s.rooms.ExpireSeat(r, id, gen); ok {
+		logger.Infof("Room %s: %s did not come back", r.Id, id)
+		if len(rest) > 0 {
+			s.sendRoomState(r)
+		}
+	}
 }
 
 // leaveRoom takes c out of its room and tells the others; reportNotInRoom answers a LeaveRoom

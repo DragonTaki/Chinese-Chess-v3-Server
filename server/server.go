@@ -3,8 +3,8 @@
 // Do not distribute or modify
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
-// Update Date: 2026/10/07
-// Version: v1.4
+// Update Date: 2026/10/12
+// Version: v1.5
 /* ----- ----- ----- ----- */
 
 package server
@@ -12,6 +12,7 @@ package server
 import (
 	"net"
 	"sync"
+	"time"
 
 	"Chinese-Chess-v3-Server/logger"
 	"Chinese-Chess-v3-Server/server/rules"
@@ -29,6 +30,8 @@ type Server struct {
 	mu      sync.Mutex
 	loginMu sync.Mutex      // one login admitted at a time (login)
 	pending *pendingResults // results of games that ended while a player was away (delivered at their next login)
+	// seatGrace is how long a waiting room keeps a disconnected player's seat (RoomSeatGrace; shorter in tests).
+	seatGrace time.Duration
 }
 
 // NewServer creates a server using dbConn and the rules host (may be nil).
@@ -39,6 +42,8 @@ func NewServer(dbConn *gorm.DB, rulesHost *rules.Host) *Server {
 		clients: make(map[*Client]bool),
 		rooms:   NewRoomManager(),
 		pending: newPendingResults(),
+
+		seatGrace: RoomSeatGrace,
 	}
 }
 
@@ -79,7 +84,8 @@ func (s *Server) RemoveClient(c *Client) {
 	_, present := s.clients[c]
 	delete(s.clients, c)
 	s.mu.Unlock()
-	// A disconnect leaves the room, except from a running game: the seat is kept (away).
+	// A disconnect keeps the seat (away): in a running game by the game's rules, in a waiting room
+	// for seatGrace; otherwise it leaves the room.
 	s.disconnect(c)
 	// A client the heartbeat already dropped for timing out was logged there.
 	if present {
