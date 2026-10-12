@@ -257,6 +257,8 @@ type GameUpdateData struct {
 	Rejected string          `json:"rejected,omitempty"`
 	Ply      int             `json:"ply,omitempty"`
 	Mover    int             `json:"mover,omitempty"`
+	From     *[2]int         `json:"from,omitempty"`
+	To       *[2]int         `json:"to,omitempty"`
 	Record   *rules.Record   `json:"record,omitempty"`
 	Position *rules.Position `json:"position,omitempty"`
 	Check    bool            `json:"check,omitempty"`
@@ -530,7 +532,7 @@ func (s *Server) handleGameAction(c *Client, pkt *Packet) {
 		if res.GameOver == nil {
 			s.armDeadline(g, now)
 		}
-		update := GameUpdateData{Seq: act.Seq, Ply: len(g.moves), Mover: side, Record: res.Record, Position: &g.position, Check: res.Check, Clocks: g.clocksAt(now)}
+		update := GameUpdateData{Seq: act.Seq, Ply: len(g.moves), Mover: side, From: act.From, To: act.To, Record: res.Record, Position: &g.position, Check: res.Check, Clocks: g.clocksAt(now)}
 		data, _ := json.Marshal(update)
 		for _, p := range g.players {
 			p.conn.SendPacket(CreatePacket(PacketTypeGameUpdate, "Server", g.room.Id, string(data), ""))
