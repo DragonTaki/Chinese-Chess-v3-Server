@@ -3,8 +3,8 @@
 // Do not distribute or modify
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
-// Update Date: 2026/10/05
-// Version: v1.1
+// Update Date: 2026/10/12
+// Version: v1.2
 /* ----- ----- ----- ----- */
 
 package db
@@ -28,6 +28,20 @@ type Token struct {
 	IssuedAt  time.Time
 	ExpiresAt time.Time
 	LastSeen  time.Time
+}
+
+// LoginToken is a remembered login (ONLINE-PLAY 8.25): a long-lived, revocable token the client
+// keeps (encrypted by the OS) to log in without the password. Only its SHA-256 hash is stored. Each
+// use rotates it (the used one is revoked with RevokedBy LoginTokenRotated, a new one issued); a
+// revoked row stays until it expires, so a rotated token used again is recognized (theft).
+type LoginToken struct {
+	Hash      string `gorm:"primaryKey"` // SHA-256 of the token, hex
+	UserID    string `gorm:"index;not null"`
+	CreatedAt time.Time
+	ExpiresAt time.Time
+	LastUsed  time.Time
+	Revoked   bool
+	RevokedBy string // why it was revoked: LoginTokenRotated, LoginTokenLogout, LoginTokenCapped, LoginTokenReused
 }
 
 // Game is a played online game, written by the server when it ends (the record that counts: the

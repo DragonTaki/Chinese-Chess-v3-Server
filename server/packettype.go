@@ -3,8 +3,8 @@
 // Do not distribute or modify
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
-// Update Date: 2026/10/05
-// Version: v1.1
+// Update Date: 2026/10/12
+// Version: v1.2
 /* ----- ----- ----- ----- */
 
 package server
@@ -18,6 +18,7 @@ const (
 	// Auth
 	PacketTypeAuthRequest  PacketType = "AuthRequest"
 	PacketTypeAuthResponse PacketType = "AuthResponse"
+	PacketTypeLogout       PacketType = "Logout"
 
 	// Room
 	PacketTypeRoomList   PacketType = "RoomList"

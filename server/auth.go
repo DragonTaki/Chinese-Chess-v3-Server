@@ -3,8 +3,8 @@
 // Do not distribute or modify
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
-// Update Date: 2026/10/07
-// Version: v1.3
+// Update Date: 2026/10/12
+// Version: v1.4
 /* ----- ----- ----- ----- */
 
 package server
@@ -25,23 +25,25 @@ type AuthMessage struct {
 	Version  string `json:"version"`
 }
 
-// Authenticate runs the two-stage handshake (version, then username / password) on c, reading
-// with scanner (the connection's only reader, shared with Client.Listen), then admits the account
-// (login: the duplicate-login rule). Returns true on success; false on failure, refusal or when it
+// verified is the account a handshake proved (ok false: the handshake failed); admitted by
+// loginWith back on Authenticate's goroutine, so it runs before the connection's RemoveClient can.
+type verified struct {
+	ok               bool
+	uid, name, token string
+	refresh          func() (string, bool) // the login token to send (see loginWith); nil: none
+}
+
+// Authenticate runs the two-stage handshake (version, then username / password or a login token)
+// on c, reading with scanner (the connection's only reader, shared with Client.Listen), then admits
+// the account (loginWith: the duplicate-login rule). Returns true on success; false on failure, refusal or when it
 // does not finish within timeout.
 func (s *Server) Authenticate(c *Client, scanner *bufio.Scanner, timeout time.Duration) bool {
 	dbConn := s.dbConn
-	// The verified account (ok false: the handshake failed); admitted by login back on the caller's
-	// goroutine, so it runs before this connection's RemoveClient can.
-	type verified struct {
-		ok               bool
-		uid, name, token string
-	}
 	authCh := make(chan verified, 1)
 
 	go func() {
 		// Stage 1: Version
-		// Stage 2: Email (sent as AuthData.Username) and password
+		// Stage 2: Email (sent as AuthData.Username) and password, or a login token
 		stage := 1
 
 		for scanner.Scan() {
@@ -78,6 +80,10 @@ func (s *Server) Authenticate(c *Client, scanner *bufio.Scanner, timeout time.Du
 				stage = 2
 
 			case 2:
+				if ad.RefreshToken != "" {
+					authCh <- s.verifyLoginToken(c, ad.RefreshToken)
+					return
+				}
 				if ad.Username == "" || ad.Password == "" {
 					logger.Warnf("Missing username/password from %s", c.RemoteAddr)
 					s.rejectAuth(c, AuthFailMissingCredentials)
@@ -93,7 +99,19 @@ func (s *Server) Authenticate(c *Client, scanner *bufio.Scanner, timeout time.Du
 					return
 				}
 
-				authCh <- verified{ok: true, uid: uid, name: db.UserName(dbConn, uid), token: token}
+				v := verified{ok: true, uid: uid, name: db.UserName(dbConn, uid), token: token}
+				if ad.Remember {
+					v.refresh = func() (string, bool) {
+						rt, err := db.IssueLoginToken(dbConn, uid)
+						if err != nil {
+							// The login still succeeds, only not remembered.
+							logger.Warnf("Could not issue a login token for %s: %v", uid, err)
+							return "", true
+						}
+						return rt, true
+					}
+				}
+				authCh <- v
 				return
 			}
 		}
@@ -101,7 +119,7 @@ func (s *Server) Authenticate(c *Client, scanner *bufio.Scanner, timeout time.Du
 
 	select {
 	case v := <-authCh:
-		if !v.ok || !s.login(c, v.uid, v.name, v.token) {
+		if !v.ok || !s.loginWith(c, v.uid, v.name, v.token, v.refresh) {
 			return false
 		}
 		logger.Infof("Client %s authenticated successfully", c.RemoteAddr)
@@ -112,14 +130,50 @@ func (s *Server) Authenticate(c *Client, scanner *bufio.Scanner, timeout time.Du
 	}
 }
 
-// login admits c as the account uid whose credentials it just proved, under the duplicate-login
+// verifyLoginToken checks a login token sent instead of the email and password (ONLINE-PLAY 8.25):
+// a live one logs its account in (a session token issued as for a password login) and is rotated
+// when the login is admitted; any other is refused (AuthFailInvalidLoginToken).
+func (s *Server) verifyLoginToken(c *Client, refreshToken string) verified {
+	uid, err := db.CheckLoginToken(s.dbConn, refreshToken)
+	if err != nil {
+		if err != db.ErrInvalidLoginToken {
+			logger.Warnf("Could not check the login token from %s: %v", c.RemoteAddr, err)
+		}
+		logger.Warnf("Invalid login token from %s", c.RemoteAddr)
+		s.rejectAuth(c, AuthFailInvalidLoginToken)
+		return verified{}
+	}
+	token, ok := db.IssueSession(s.dbConn, uid)
+	if !ok {
+		s.rejectAuth(c, AuthFailInvalidLoginToken)
+		return verified{}
+	}
+	refresh := func() (string, bool) {
+		rt, err := db.RotateLoginToken(s.dbConn, uid, refreshToken)
+		if err != nil {
+			logger.Warnf("Login token from %s could not be rotated: %v", c.RemoteAddr, err)
+			return "", false
+		}
+		return rt, true
+	}
+	return verified{ok: true, uid: uid, name: db.UserName(s.dbConn, uid), token: token, refresh: refresh}
+}
+
+// login is loginWith without a login token to send.
+func (s *Server) login(c *Client, uid, name, token string) bool {
+	return s.loginWith(c, uid, name, token, nil)
+}
+
+// loginWith admits c as the account uid whose credentials it just proved, under the duplicate-login
 // rule (ONLINE-PLAY 8.14, 8.24): when another live connection of the account exists, c replaces it
 // if both come from the same place (closeLogins) and is refused (AuthFailAlreadyLoggedIn)
 // otherwise. c then takes over the account's seat (resume). A replaced connection is told so (AuthReplacedByNewLogin) and closed. An earlier
 // connection that is already dead (closed, or gone from the server) is no obstacle: this is a
 // reconnect. Logins are handled one at a time (loginMu), so two at once cannot both pass. Returns
-// whether c was admitted (it was then sent the successful AuthResponse).
-func (s *Server) login(c *Client, uid, name, token string) bool {
+// whether c was admitted (it was then sent the successful AuthResponse). Once the rule lets c in,
+// refresh (unless nil) gives the login token the AuthResponse carries (RefreshToken; "" none); its
+// false refuses the login after all (AuthFailInvalidLoginToken: the token used was spent meanwhile).
+func (s *Server) loginWith(c *Client, uid, name, token string, refresh func() (string, bool)) bool {
 	s.loginMu.Lock()
 	defer s.loginMu.Unlock()
 	others := s.liveSessions(c, uid)
@@ -131,10 +185,20 @@ func (s *Server) login(c *Client, uid, name, token string) bool {
 		}
 	}
 
+	resp := CreatePacket(PacketTypeAuthResponse, "Server", "", AuthSuccessString, token)
+	if refresh != nil {
+		rt, ok := refresh()
+		if !ok {
+			s.rejectAuth(c, AuthFailInvalidLoginToken)
+			return false
+		}
+		resp.RefreshToken = rt
+	}
+
 	// The client is known by its account's id from now on, never by the id it puts in its packets
 	// (the client is untrusted).
 	c.MarkAuthenticated(uid, name, token)
-	c.SendPacket(CreatePacket(PacketTypeAuthResponse, "Server", "", AuthSuccessString, token))
+	c.SendPacket(resp)
 
 	// The account's seat (a game or a waiting room) moves to c before any replaced connection is
 	// closed, so that connection's disconnect finds no seat to leave or mark away.
@@ -164,6 +228,27 @@ func (s *Server) liveSessions(c *Client, uid string) []*Client {
 		}
 	}
 	return list
+}
+
+// logout handles a Logout packet: the login token in its Data ({"refreshToken"}; may be absent)
+// is revoked when it is a live one of c's account, c is sent a Logout back and its connection ends
+// (the caller stops reading; the disconnect is handled as any other).
+func (s *Server) logout(c *Client, pkt *Packet) {
+	var req struct {
+		RefreshToken string `json:"refreshToken"`
+	}
+	if pkt.Data != "" {
+		if err := json.Unmarshal([]byte(pkt.Data), &req); err != nil {
+			logger.Warnf("Invalid Logout data from %s", c.RemoteAddr)
+		}
+	}
+	if req.RefreshToken != "" && s.dbConn != nil {
+		if _, err := db.RevokeLoginToken(s.dbConn, c.Id(), req.RefreshToken); err != nil {
+			logger.Warnf("Could not revoke the login token of %s: %v", c.Id(), err)
+		}
+	}
+	c.SendPacket(CreatePacket(PacketTypeLogout, "Server", "", "", ""))
+	logger.Infof("Client %s (%s) logged out", c.RemoteAddr, c.Id())
 }
 
 // rejectAuth tells the client why its handshake failed (a failed AuthResponse, reason in Data).

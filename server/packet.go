@@ -3,8 +3,8 @@
 // Do not distribute or modify
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
-// Update Date: 2026/10/05
-// Version: v1.1
+// Update Date: 2026/10/12
+// Version: v1.2
 /* ----- ----- ----- ----- */
 
 package server
@@ -18,14 +18,21 @@ type Packet struct {
 	RoomId   string     `json:"roomId,omitempty"`
 	Data     string     `json:"data"`
 	Token    string     `json:"token"`
+	// RefreshToken is set only on a successful AuthResponse that remembers the login: the login
+	// token to keep for the next login (AuthData.RefreshToken).
+	RefreshToken string `json:"refreshToken,omitempty"`
 }
 
 // AuthData is an AuthRequest's Data: the version (stage 1) or the login (stage 2). Username
-// carries the account's email (VerifyUser looks users up by email).
+// carries the account's email (VerifyUser looks users up by email). Remember asks a password login
+// to be remembered (the AuthResponse then carries a login token); RefreshToken, when set, logs in
+// with such a token instead of the email and password (ONLINE-PLAY 8.25).
 type AuthData struct {
-	Version  string `json:"version,omitempty"`
-	Username string `json:"username,omitempty"`
-	Password string `json:"password,omitempty"`
+	Version      string `json:"version,omitempty"`
+	Username     string `json:"username,omitempty"`
+	Password     string `json:"password,omitempty"`
+	Remember     bool   `json:"remember,omitempty"`
+	RefreshToken string `json:"refreshToken,omitempty"`
 }
 
 // CreatePacket builds a packet.

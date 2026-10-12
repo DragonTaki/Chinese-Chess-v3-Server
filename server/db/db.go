@@ -3,8 +3,8 @@
 // Do not distribute or modify
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
-// Update Date: 2026/10/06
-// Version: v1.2
+// Update Date: 2026/10/12
+// Version: v1.3
 /* ----- ----- ----- ----- */
 
 package db
@@ -25,7 +25,7 @@ func InitDB(path string) (*gorm.DB, error) {
 		return nil, err
 	}
 
-	if err := db.AutoMigrate(&User{}, &Token{}, &Game{}); err != nil {
+	if err := db.AutoMigrate(&User{}, &Token{}, &LoginToken{}, &Game{}); err != nil {
 		return nil, err
 	}
 	return db, nil

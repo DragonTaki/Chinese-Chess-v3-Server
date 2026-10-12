@@ -3,8 +3,8 @@
 // Do not distribute or modify
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
-// Update Date: 2026/10/07
-// Version: v1.5
+// Update Date: 2026/10/12
+// Version: v1.6
 /* ----- ----- ----- ----- */
 
 package server
@@ -25,6 +25,9 @@ const (
 	AuthFailInvalidCredentials = "InvalidCredentials"
 	// Another live connection of the account exists, from too far away (ONLINE-PLAY 8.24).
 	AuthFailAlreadyLoggedIn = "AlreadyLoggedIn"
+	// The login token is unknown, expired or revoked (ONLINE-PLAY 8.25): the client asks for the
+	// email and password again.
+	AuthFailInvalidLoginToken = "InvalidLoginToken"
 )
 
 // AuthReplacedByNewLogin is the Data of the AuthResponse sent to a logged-in connection replaced by

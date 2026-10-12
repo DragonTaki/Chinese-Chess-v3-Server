@@ -3,8 +3,8 @@
 // Do not distribute or modify
 // Author: DragonTaki (https://github.com/DragonTaki)
 // Create Date: 2025/11/01
-// Update Date: 2026/10/07
-// Version: v1.4
+// Update Date: 2026/10/12
+// Version: v1.5
 /* ----- ----- ----- ----- */
 
 package server
@@ -147,8 +147,7 @@ func NewClient(conn net.Conn, srv *Server) *Client {
 }
 
 // Listen serves the connection: the handshake, a welcome message, then one JSON packet per line
-// until the connection ends or the client sends "/quit". Only chat packets are handled so far
-// (broadcast to the other clients); the room / game packet types are not implemented.
+// until the connection ends, the client sends "/quit" or it logs out (Logout).
 func (c *Client) Listen() {
 	// The reply already queued (an auth failure's reason, say) still goes out before the close.
 	defer func() {
@@ -190,6 +189,11 @@ func (c *Client) Listen() {
 			errPkt := CreatePacket(PacketTypeError, "Server", "", fmt.Sprintf("Invalid JSON: %v", err), "")
 			c.SendPacket(errPkt)
 			continue
+		}
+
+		if pkt.Type == PacketTypeLogout {
+			c.Server.logout(c, pkt)
+			break
 		}
 
 		switch pkt.Type {
